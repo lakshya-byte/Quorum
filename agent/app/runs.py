@@ -134,9 +134,12 @@ class RunRegistry:
     def get(self, run_id: str) -> Run | None:
         return self.runs.get(run_id) or self.load(run_id)
 
-    def start(self, bug: Bug, user_id: str | None = None, model_override: str | None = None) -> Run:
+    def start(
+        self, bug: Bug, user_id: str | None = None, model_override: str | None = None, mode: str | None = None,
+    ) -> Run:
+        """Start a search in the background. `mode` forces a mode (used for the fake replay fallback)."""
         run = Run(
-            run_id=uuid.uuid4().hex, bug_id=bug["id"], mode=self.resolve_mode(),
+            run_id=uuid.uuid4().hex, bug_id=bug["id"], mode=mode or self.resolve_mode(),
             user_id=user_id, model_override=model_override,
         )
         self.runs[run.run_id] = run
