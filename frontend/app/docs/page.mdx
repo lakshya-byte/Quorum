@@ -1,0 +1,40 @@
+# PatchLoop documentation
+
+PatchLoop is an AI agent that fixes bugs and proves the fix by running the
+test suite inside an isolated, ephemeral micro-VM. It doesn't suggest a
+patch — it isolates the failing code, synthesizes a fix, boots a sandbox,
+and only opens a pull request once the tests are actually green.
+
+This section documents everything built so far: the marketing site, the
+sign-in/sign-up UI, and the Go authentication backend behind them.
+
+## Monorepo layout
+
+PatchLoop is two sibling repositories on disk:
+
+```
+patchloop/            # this repo — Next.js frontend (marketing site + auth UI + these docs)
+patchloop-backend/    # Go + Gin + MongoDB auth API
+```
+
+They're developed together but deployed independently — the frontend talks
+to the backend over HTTP with credentialed (cookie-based) requests.
+
+## Tech stack
+
+| Layer | Choice |
+| --- | --- |
+| Frontend framework | Next.js 16 (App Router, Turbopack) |
+| UI | React 19, Tailwind CSS v4 |
+| Animation | GSAP + `@gsap/react`, Lenis smooth scroll |
+| Backend framework | Go + Gin |
+| Database | MongoDB |
+| Auth | JWT (access + refresh) in httpOnly cookies |
+| Transactional email | Resend (OTP email verification) |
+
+## Where to go next
+
+- **[Getting started](/docs/getting-started)** — run both the frontend and backend locally
+- **[Frontend](/docs/frontend)** — routing conventions, design tokens, component inventory
+- **[Backend](/docs/backend)** — service architecture, data model, auth flow
+- **[API reference](/docs/api-reference)** — every endpoint, request/response shape, and error code

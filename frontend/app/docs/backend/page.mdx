@@ -1,0 +1,94 @@
+# Backend
+
+`patchloop-backend` is a monolithic Go service: Gin for HTTP, MongoDB for
+persistence, JWT for sessions. It currently implements one feature —
+email/password authentication with OTP email verification — structured so
+more features slot into the same layout later.
+
+## Project layout
+
+```
+patchloop-backend/
+  cmd/api/main.go              # entrypoint: load config, connect Mongo, build router, serve
+  internal/
+    config/       # env var loading
+    db/           # Mongo client + index setup
+    models/       # User, OTP, RefreshToken (bson structs)
+    dto/          # request/response structs with validation tags
+    repository/   # Mongo CRUD per collection
+    service/      # business logic: auth_service.go, mailer.go
+    handler/      # Gin handlers + router
+    middleware/    # JWT auth guard, CORS
+    pkg/          # jwt, hash (bcrypt + sha256), otp generation, random tokens
+```
+
+Standard dependency direction: `handler` → `service` → `repository` → Mongo.
+Handlers never touch the database directly; services never touch Gin.
+
+## Data model
+
+Three MongoDB collections:
+
+| Collection | Fields | Notes |
+| --- | --- | --- |
+| `users` | `email` (unique idx), `password_hash`, `company_name`, `email_verified`, timestamps | bcrypt-hashed password |
+| `otps` | `user_id`, `code_hash`, `purpose`, `attempts`, `expires_at` | TTL index auto-deletes expired codes; code hashed with bcrypt |
+| `refresh_tokens` | `user_id`, `token_hash`, `revoked`, `expires_at` | TTL index; hashed with SHA-256 (high-entropy, no brute-force risk) |
+
+## Auth flow
+
+1. **Signup** — hash password, create user with `email_verified: false`,
+   generate a 6-digit OTP, store it hashed with a 10-minute TTL, email it
+   via Resend. A mail-provider failure doesn't fail the signup — the OTP is
+   already persisted, so the user can request a resend.
+2. **Verify OTP** — compare the submitted code against the stored hash
+   (max 5 attempts), mark the user verified, issue an access + refresh JWT
+   pair as httpOnly cookies.
+3. **Login** — bcrypt-compare the password, reject if the email isn't
+   verified yet, issue a fresh token pair.
+4. **Refresh** — validate the refresh cookie against `refresh_tokens`,
+   **rotate**: revoke the used token, issue a new pair. This means a stolen
+   refresh token can only be replayed once before the legitimate rotation
+   invalidates it.
+5. **Logout** — revoke the refresh token record, clear both cookies.
+
+Access tokens are short-lived (~15 min) and stateless (JWT claims only).
+Refresh tokens are opaque random strings, only their SHA-256 hash is
+stored, so they're revocable — unlike a pure-JWT refresh scheme, logout and
+rotation actually invalidate the session server-side.
+
+## Cookies
+
+Both tokens are set as `HttpOnly` cookies with `SameSite=Lax`:
+
+- `patchloop_access_token` — short TTL, sent on every request
+- `patchloop_refresh_token` — long TTL, only read by `/api/auth/refresh`
+
+`COOKIE_SECURE` should be `true` in any environment served over HTTPS.
+
+## Environment variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `8080` | HTTP listen port |
+| `MONGO_URI` | `mongodb://localhost:27017` | Mongo connection string |
+| `MONGO_DB_NAME` | `patchloop` | database name |
+| `JWT_ACCESS_SECRET` | *(required)* | HS256 signing secret, access tokens |
+| `JWT_REFRESH_SECRET` | *(required)* | reserved for refresh-token signing |
+| `JWT_ACCESS_TTL_MIN` | `15` | access token lifetime, minutes |
+| `JWT_REFRESH_TTL_DAYS` | `30` | refresh token lifetime, days |
+| `RESEND_API_KEY` | *(required)* | Resend API key for OTP emails |
+| `RESEND_FROM_EMAIL` | `noreply@patchloop.dev` | verified sender address |
+| `FRONTEND_ORIGIN` | `http://localhost:3000` | allowed CORS origin (credentialed) |
+| `OTP_TTL_MIN` | `10` | OTP code lifetime, minutes |
+| `COOKIE_SECURE` | `false` | set `true` behind HTTPS |
+| `COOKIE_DOMAIN` | `localhost` | cookie `Domain` attribute |
+
+See `.env.example` in `patchloop-backend/` for a ready-to-copy template.
+
+## Out of scope (for now)
+
+The frontend's sign-in page has Password / Magic Link / Passkey tabs and
+GitHub/Google/SAML buttons — only the password flow has a real backend
+today. Magic link, passkey/WebAuthn, OAuth, and password reset are not yet
+implemented.

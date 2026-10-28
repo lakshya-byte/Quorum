@@ -1,0 +1,107 @@
+# API reference
+
+Base URL: `http://localhost:8080` in development. All requests that set or
+rely on auth cookies must be made with credentials included
+(`fetch(url, { credentials: "include" })`), and the backend's
+`FRONTEND_ORIGIN` must match the calling origin for CORS to allow it.
+
+All responses are JSON. Errors take the shape `{ "error": "message" }`.
+
+## `POST /api/auth/signup`
+
+Creates an account and emails a 6-digit OTP. The account can't log in until
+verified.
+
+**Body**
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `email` | string | required, valid email |
+| `password` | string | required, min 8 characters |
+| `companyName` | string | required, 1–200 characters |
+
+**Responses**
+
+| Status | Meaning |
+| --- | --- |
+| `201` | Created — `{ message, user }` |
+| `400` | Validation error |
+| `409` | Email already registered |
+
+## `POST /api/auth/verify-otp`
+
+Confirms the emailed code and activates the account. On success, sets the
+access + refresh cookies.
+
+**Body:** `{ email, code }` — `code` must be exactly 6 digits.
+
+| Status | Meaning |
+| --- | --- |
+| `200` | Verified — `{ user }`, cookies set |
+| `400` | Invalid or expired code |
+| `404` | User not found |
+| `429` | Too many attempts (max 5) — request a new code |
+
+## `POST /api/auth/resend-otp`
+
+Issues a new OTP, invalidating the previous one. Rate-limited to one
+request per 60 seconds per account.
+
+**Body:** `{ email }`
+
+| Status | Meaning |
+| --- | --- |
+| `200` | New code sent (also returned for unknown emails, to avoid leaking which addresses are registered) |
+| `429` | Cooldown active — wait before retrying |
+
+## `POST /api/auth/login`
+
+**Body:** `{ email, password }`
+
+| Status | Meaning |
+| --- | --- |
+| `200` | Signed in — `{ user }`, cookies set |
+| `401` | Invalid email or password |
+| `403` | Email not verified yet (`code: "EMAIL_NOT_VERIFIED"`) |
+
+## `POST /api/auth/refresh`
+
+Reads the refresh cookie, rotates it (revokes the old one, issues a new
+pair). No body required.
+
+| Status | Meaning |
+| --- | --- |
+| `200` | Refreshed — new cookies set |
+| `401` | Session expired or already used — sign in again |
+
+## `POST /api/auth/logout`
+
+Revokes the current refresh token and clears both cookies. No body
+required.
+
+| Status | Meaning |
+| --- | --- |
+| `200` | Logged out |
+
+## `GET /api/auth/me`
+
+Protected — requires a valid access token cookie.
+
+| Status | Meaning |
+| --- | --- |
+| `200` | `{ user }` for the authenticated session |
+| `401` | Not authenticated / invalid or expired access token |
+
+## `UserResponse` shape
+
+Every endpoint that returns a user uses this shape (password hash is never
+exposed):
+
+```json
+{
+  "id": "6ab3cde11cbb6d8cdcc58a4a",
+  "email": "you@company.com",
+  "companyName": "Acme Inc",
+  "emailVerified": true
+}
+```

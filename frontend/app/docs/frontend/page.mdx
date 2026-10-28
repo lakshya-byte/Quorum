@@ -1,0 +1,95 @@
+# Frontend
+
+Next.js 16, App Router, Turbopack. Tailwind CSS v4 with a token system
+defined in `app/globals.css`. GSAP drives scroll/entrance animation, Lenis
+drives smooth scrolling.
+
+## Routing: groups + private folders
+
+Routes are organized with **route groups** (parentheses — don't affect the
+URL) and **private folders** (underscore prefix — never routable), so it's
+always obvious what's a page and what's a colocated helper:
+
+```
+app/
+  layout.tsx, globals.css        # root layout, design tokens
+  _components/SmoothScroll.tsx   # shared across the whole app
+  _lib/lenis.ts                  # shared Lenis singleton
+
+  (marketing)/
+    page.tsx                     # → "/"
+    _components/                 # Header, Hero, Footer, etc. — marketing-only
+
+  (auth)/
+    signin/page.tsx               # → "/signin"
+    signup/page.tsx               # → "/signup"
+    _components/                  # SignInCard, SignUpCard
+
+  docs/
+    layout.tsx, page.mdx, .../    # → "/docs" and sub-pages (this section)
+```
+
+`(marketing)` and `(auth)` are route groups: they organize files without
+adding a URL segment. Anything prefixed `_` (`_components`, `_lib`) is
+guaranteed by Next.js to never become a route, which is what keeps
+component folders from ever colliding with real pages.
+
+## Design tokens
+
+All color/typography tokens live in `app/globals.css` as CSS variables,
+mapped into Tailwind utilities via `@theme inline`:
+
+| Token | Value | Usage |
+| --- | --- | --- |
+| `--color-bg` | `#07090e` | page background |
+| `--color-primary` | `#10b981` | brand emerald — CTAs, accents |
+| `--color-secondary` | `#06b6d4` | cyan accent |
+| `--color-error` | `#f87171` | error states |
+| `--color-on-surface` | `#e1e2eb` | primary text |
+| `--color-on-surface-variant` | `#8f9cae` | secondary/muted text |
+| `--color-surface-container-*` | `#07090e` → `#262d3d` | layered dark surfaces, lowest → brightest |
+| `--font-sans` | Geist | body/UI font |
+| `--font-mono` | JetBrains Mono | code, labels, terminal-style UI |
+
+Icons are [Material Symbols Outlined](https://fonts.google.com/icons),
+loaded globally in `app/layout.tsx` and used via
+`<span className="material-symbols-outlined">icon_name</span>`.
+
+## Animation
+
+- **Lenis** (`app/_lib/lenis.ts`) — a module-scoped singleton set up once by
+  `<SmoothScroll />` in the root layout. Any component can call
+  `smoothScrollTo(target)` to trigger a smooth scroll (e.g. the hero and
+  quickstart "launch demo" buttons scrolling to the live dashboard).
+- **GSAP** (`@gsap/react`'s `useGSAP` + `ScrollTrigger`) — entrance timelines
+  and scroll-scrubbed effects, e.g. the hero's staggered fade-in and the
+  bento grid's stagger-on-scroll-into-view.
+
+## Page inventory
+
+### `/` — marketing landing page (`app/(marketing)/`)
+
+| Component | Renders |
+| --- | --- |
+| `Header` | Fixed nav — logo, status badges, section links, Sign in / Get Started |
+| `Hero` | Headline, CLI-style pill, launch-demo CTA, background image |
+| `ProverDashboard` | Mock "live VM console" — verification steps, streaming log, patch diff |
+| `CredibilityStrip` | Stat tiles (latency, isolation, verification) |
+| `ArchitectureBento` | Bento grid explaining the sandboxing architecture |
+| `ProofExplorer` | Before/after diff viewer with a mock "re-run sandbox" action |
+| `Quickstart` | Install methods (CLI/GitHub/Docker/Terraform) with copy-to-clipboard |
+| `Footer` | Status line, commit hash, links |
+
+### `/signin`, `/signup` — auth pages (`app/(auth)/`)
+
+`SignInCard` and `SignUpCard` are fully client-side forms (email/password,
+passkey button, SSO buttons). They are **not yet wired to the backend** —
+see [API reference](/docs/api-reference) for the endpoints they should call
+next (`POST /api/auth/login`, `POST /api/auth/signup`, etc.).
+
+### `/docs` — this documentation (`app/docs/`)
+
+Built with [`@next/mdx`](https://nextjs.org/docs/app/guides/mdx): each page
+below is a `.mdx` file that is both the readable source and the literal
+file Next.js renders. Shared styling for markdown elements (headings, code
+blocks, tables) lives in `mdx-components.tsx` at the project root.

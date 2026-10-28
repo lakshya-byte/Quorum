@@ -1,0 +1,4 @@
+.env
+patchloop-backend
+/tmp
+*.log

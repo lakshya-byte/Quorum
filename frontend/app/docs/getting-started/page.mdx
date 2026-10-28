@@ -1,0 +1,58 @@
+# Getting started
+
+Both repos need to be running for the full flow (sign up → verify email →
+sign in) to work end to end. The frontend on its own is fine for working on
+the marketing site or UI only.
+
+## Prerequisites
+
+- Node.js 20+ and npm
+- Go 1.22+
+- A running MongoDB instance (local or Docker)
+- A [Resend](https://resend.com) API key, for sending OTP verification emails
+
+## Frontend
+
+```bash
+cd patchloop
+npm install
+npm run dev
+```
+
+Opens at [http://localhost:3000](http://localhost:3000). Routes:
+
+- `/` — marketing landing page
+- `/signin`, `/signup` — auth pages
+- `/docs` — this documentation
+
+## Backend
+
+```bash
+cd patchloop-backend
+cp .env.example .env
+# fill in JWT_ACCESS_SECRET, JWT_REFRESH_SECRET, RESEND_API_KEY
+go run ./cmd/api
+```
+
+Listens on `:8080` by default (`PORT` in `.env`). See
+[Backend → Environment variables](/docs/backend#environment-variables) for
+the full list.
+
+Quick local Mongo via Docker if you don't already have one running:
+
+```bash
+docker run -d --name patchloop-mongo -p 27017:27017 mongo:7
+```
+
+## Verifying the connection
+
+With both running, the frontend at `http://localhost:3000` and the backend
+at `http://localhost:8080` need to be able to talk to each other with
+credentials (cookies) included. The backend's `FRONTEND_ORIGIN` env var
+controls the allowed CORS origin — keep it pointed at wherever the frontend
+is actually running.
+
+```bash
+curl http://localhost:8080/health
+# {"status":"ok"}
+```
