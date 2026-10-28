@@ -26,7 +26,7 @@ def changed_lines(old: str, new: str) -> int:
     diff = difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm="", n=0)
     return sum(
         1 for line in diff
-        if line[:1] in "+-" and not line.startswith(("+++", "---"))
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
     )
 
 
