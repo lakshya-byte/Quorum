@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -125,6 +126,8 @@ func (w *GitHubWebhook) Handle(ctx context.Context, event, delivery string, body
 	return "ignored", nil
 }
 
+var mentionRe = regexp.MustCompile(`(?i)@patchloop`)
+
 // trustedAssociation limits comment triggers to people with write-ish access.
 func trustedAssociation(a string) bool {
 	switch a {
@@ -183,7 +186,7 @@ func (w *GitHubWebhook) fromPRComment(ctx context.Context, p *webhookPayload) (s
 	if err != nil || run.UserID != userID || !strings.HasPrefix(run.PRBranch, "patchloop/") {
 		return "ignored", nil // only PRs PatchLoop opened
 	}
-	msg := strings.TrimSpace(strings.NewReplacer("@patchloop", "", "@Patchloop", "", "@PatchLoop", "").Replace(p.Comment.Body))
+	msg := strings.TrimSpace(mentionRe.ReplaceAllString(p.Comment.Body, ""))
 	if msg == "" {
 		return "ignored", nil
 	}

@@ -30,17 +30,18 @@ type Stub struct {
 	UserToken    string // token returned for the OAuth code
 	Login        string
 
-	mu        sync.Mutex
-	Repos     []map[string]any
-	Branches  []string
-	Mergeable *bool  // nil = null
-	PRState   string // open | closed
-	Merged    bool
-	CheckRuns []map[string]any
-	Statuses  []map[string]any
-	calls     []Call
-	mints     int
-	MergeFail int // when non-zero, merge answers with this status
+	mu                 sync.Mutex
+	Repos              []map[string]any
+	Branches           []string
+	Mergeable          *bool  // nil = null
+	PRState            string // open | closed
+	Merged             bool
+	CheckRuns          []map[string]any
+	Statuses           []map[string]any
+	calls              []Call
+	mints              int
+	OwnedInstallations []int64 // what GET /user/installations reports
+	MergeFail          int     // when non-zero, merge answers with this status
 }
 
 func New(appID string, pub *rsa.PublicKey) *Stub {
@@ -50,7 +51,7 @@ func New(appID string, pub *rsa.PublicKey) *Stub {
 			{"full_name": "octo/widgets", "private": true, "default_branch": "main", "description": "Widgets", "language": "Go", "updated_at": "2026-01-02T03:04:05Z"},
 			{"full_name": "octo/gadgets", "private": false, "default_branch": "trunk", "description": nil, "language": nil, "updated_at": "2026-01-01T00:00:00Z"},
 		},
-		Branches: []string{"main", "dev"}, Mergeable: &t, PRState: "open",
+		OwnedInstallations: []int64{777, 888}, Branches: []string{"main", "dev"}, Mergeable: &t, PRState: "open",
 		CheckRuns: []map[string]any{{"name": "ci", "status": "completed", "conclusion": "success"}},
 	}
 }
@@ -121,6 +122,16 @@ func (s *Stub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, map[string]any{"login": s.Login, "avatar_url": "https://avatars.example/octo.png"})
+	case p == "/user/installations":
+		if auth != s.UserToken {
+			writeJSON(w, 401, map[string]any{"message": "Bad credentials"})
+			return
+		}
+		ins := []map[string]any{}
+		for _, id := range s.OwnedInstallations {
+			ins = append(ins, map[string]any{"id": id})
+		}
+		writeJSON(w, 200, map[string]any{"total_count": len(ins), "installations": ins})
 	case p == "/installation/repositories":
 		if auth != s.InstallToken {
 			writeJSON(w, 401, map[string]any{"message": "Bad credentials"})

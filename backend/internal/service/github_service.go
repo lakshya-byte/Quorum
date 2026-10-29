@@ -153,24 +153,22 @@ func (s *GitHubService) HandleCallback(ctx context.Context, installationID int64
 		}
 		conn = &models.GitHubConnection{UserID: userID}
 	}
-	conn.Mode = models.GitHubModeApp
-	if installationID != 0 {
-		conn.InstallationID = installationID
+	if installationID == 0 {
+		installationID = conn.InstallationID
 	}
-	if conn.InstallationID == 0 {
+	if installationID == 0 {
 		return errors.New("github did not send an installation id")
 	}
-	if code != "" {
-		tok, err := s.api.ExchangeCode(ctx, code)
-		if err != nil {
-			return fmt.Errorf("code exchange failed: %w", err)
-		}
-		if err := s.storeUserToken(conn, tok); err != nil {
-			return err
-		}
-		if u, err := s.api.GetUser(ctx, tok.AccessToken); err == nil {
-			conn.Login, conn.AvatarURL = u.Login, u.AvatarURL
-		}
+	tok, err := s.verifyInstallationOwnership(ctx, installationID, code)
+	if err != nil {
+		return err
+	}
+	conn.Mode, conn.InstallationID = models.GitHubModeApp, installationID
+	if err := s.storeUserToken(conn, tok); err != nil {
+		return err
+	}
+	if u, err := s.api.GetUser(ctx, tok.AccessToken); err == nil {
+		conn.Login, conn.AvatarURL = u.Login, u.AvatarURL
 	}
 	return s.store.Put(ctx, conn)
 }

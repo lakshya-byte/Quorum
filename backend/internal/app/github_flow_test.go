@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -459,7 +460,11 @@ func TestMergeGate(t *testing.T) {
 
 func TestMergeNeedsUserAuthorization(t *testing.T) {
 	e := newMemEnv(t, nil)
-	e.connectApp("alice", false) // installed, but never authorised as a user
+	e.connectApp("alice", true)
+	// Simulate a user token that expired and cannot be refreshed.
+	c := e.store.RawGitHub("u-alice")
+	c.EncUserToken, c.EncRefreshToken = "", ""
+	_ = e.store.Put(context.Background(), c)
 	id := e.startTask("alice", "octo/widgets", "fix it")
 	e.waitCompleted("alice", id)
 	st, m, _ := e.api("alice", "POST", "/api/runs/"+id+"/merge", map[string]any{})
@@ -623,3 +628,28 @@ func TestNotificationsAPI(t *testing.T) {
 }
 
 var _ = models.RunKindRepo
+
+func TestCallbackRejectsInstallationsTheUserDoesNotOwn(t *testing.T) {
+	e := newMemEnv(t, nil)
+	state := func(user string) string {
+		_, m, _ := e.api(user, "GET", "/api/github/connect", nil)
+		return strings.Split(m["url"].(string), "state=")[1]
+	}
+	// installation_id is a query parameter: claiming someone else's is refused.
+	_, loc, _ := e.api("", "GET", "/api/github/callback?installation_id=999&code=goodcode&state="+state("mallory"), nil)
+	if !strings.Contains(loc["_location"].(string), "installation_not_yours") {
+		t.Fatalf("foreign installation accepted: %v", loc["_location"])
+	}
+	// Without the OAuth code ownership cannot be proven.
+	_, loc, _ = e.api("", "GET", "/api/github/callback?installation_id=777&state="+state("mallory"), nil)
+	if !strings.Contains(loc["_location"].(string), "no_authorization") {
+		t.Fatalf("unverifiable installation accepted: %v", loc["_location"])
+	}
+	_, m, _ := e.api("mallory", "GET", "/api/github/status", nil)
+	if m["connected"] != false || e.gh.Mints() != 0 {
+		t.Fatalf("mallory got a connection or a token: %v mints=%d", m, e.gh.Mints())
+	}
+	if st, _, _ := e.api("mallory", "GET", "/api/github/repos", nil); st != 409 {
+		t.Fatalf("repos: %d", st)
+	}
+}

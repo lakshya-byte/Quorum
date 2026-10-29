@@ -59,6 +59,10 @@ func (h *GitHubHandler) Callback(c *gin.Context) {
 			reason = "invalid_state"
 		case err.Error() == "github did not send an installation id":
 			reason = "no_installation"
+		case errors.Is(err, service.ErrNoUserAuthorization):
+			reason = "no_authorization"
+		case errors.Is(err, service.ErrInstallationNotOwned):
+			reason = "installation_not_yours"
 		}
 		// The error text may come from GitHub; log it, never put it in the URL.
 		slog.Warn("github callback failed", "reason", reason, "error", err.Error())

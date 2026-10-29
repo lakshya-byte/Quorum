@@ -182,7 +182,9 @@ func TestGitHubErrorsAreTruncatedAndTokenFree(t *testing.T) {
 
 // ---- GitHubService: state + token handling --------------------------------
 
-type memGH struct{ m map[string]*models.GitHubConnection }
+type memGH struct {
+	m map[string]*models.GitHubConnection
+}
 
 func (s *memGH) Get(_ context.Context, id string) (*models.GitHubConnection, error) {
 	if c, ok := s.m[id]; ok {
@@ -223,7 +225,7 @@ func TestStateIsSignedBoundAndExpires(t *testing.T) {
 	}
 	// Tampering with the payload (swap the user) invalidates the signature.
 	payload, sig, _ := strings.Cut(st, ".")
-	forged := base64.RawURLEncoding.EncodeToString([]byte("user-2|" + "9999999999|00")) + "." + sig
+	forged := base64.RawURLEncoding.EncodeToString([]byte("user-2|"+"9999999999|00")) + "." + sig
 	if _, err := g.VerifyState(forged); err == nil {
 		t.Error("forged payload accepted")
 	}
