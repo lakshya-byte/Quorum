@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -31,38 +32,34 @@ func Connect(uri, dbName string) *Database {
 	database := client.Database(dbName)
 
 	d := &Database{Client: client, Database: database}
-	d.ensureIndexes(ctx)
+	if err := EnsureIndexes(ctx, database); err != nil {
+		log.Fatalf("failed to create indexes: %v", err)
+	}
 
 	return d
 }
 
-func (d *Database) ensureIndexes(ctx context.Context) {
-	users := d.Database.Collection("users")
-	_, err := users.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys:    bson.D{{Key: "email", Value: 1}},
-		Options: options.Index().SetUnique(true),
-	})
-	if err != nil {
-		log.Fatalf("failed to create users email index: %v", err)
+// EnsureIndexes creates every index the backend relies on. It is idempotent.
+func EnsureIndexes(ctx context.Context, database *mongo.Database) error {
+	type idx struct {
+		col   string
+		model mongo.IndexModel
 	}
-
-	otps := d.Database.Collection("otps")
-	_, err = otps.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys:    bson.D{{Key: "expires_at", Value: 1}},
-		Options: options.Index().SetExpireAfterSeconds(0),
-	})
-	if err != nil {
-		log.Fatalf("failed to create otps ttl index: %v", err)
+	indexes := []idx{
+		{"users", mongo.IndexModel{Keys: bson.D{{Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)}},
+		{"otps", mongo.IndexModel{Keys: bson.D{{Key: "expires_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)}},
+		{"refresh_tokens", mongo.IndexModel{Keys: bson.D{{Key: "expires_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)}},
+		{"runs", mongo.IndexModel{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "created_at", Value: -1}}}},
+		{"runs", mongo.IndexModel{Keys: bson.D{{Key: "agent_run_id", Value: 1}}}},
+		{"apiTokens", mongo.IndexModel{Keys: bson.D{{Key: "token_hash", Value: 1}}, Options: options.Index().SetUnique(true)}},
+		{"apiTokens", mongo.IndexModel{Keys: bson.D{{Key: "user_id", Value: 1}}}},
 	}
-
-	refreshTokens := d.Database.Collection("refresh_tokens")
-	_, err = refreshTokens.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys:    bson.D{{Key: "expires_at", Value: 1}},
-		Options: options.Index().SetExpireAfterSeconds(0),
-	})
-	if err != nil {
-		log.Fatalf("failed to create refresh_tokens ttl index: %v", err)
+	for _, i := range indexes {
+		if _, err := database.Collection(i.col).Indexes().CreateOne(ctx, i.model); err != nil {
+			return fmt.Errorf("index on %s: %w", i.col, err)
+		}
 	}
+	return nil
 }
 
 func (d *Database) Disconnect(ctx context.Context) {

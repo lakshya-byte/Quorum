@@ -2,11 +2,11 @@ package service
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"patchloop-backend/internal/dto"
 	"patchloop-backend/internal/models"
+	"patchloop-backend/internal/observability"
 	"patchloop-backend/internal/pkg/hash"
 	pkgjwt "patchloop-backend/internal/pkg/jwt"
 	"patchloop-backend/internal/pkg/otp"
@@ -120,7 +120,8 @@ func (s *AuthService) issueAndSendOTP(ctx context.Context, user *models.User) er
 	// provider failure doesn't strand the account — the user can retry via
 	// resend-otp instead of losing the signup entirely.
 	if err := s.mailer.SendOTPEmail(user.Email, code); err != nil {
-		log.Printf("failed to send OTP email to %s: %v", user.Email, err)
+		// Never log the email address; the user id is enough to correlate.
+		observability.L(ctx).Error("failed to send OTP email", "user_id", user.ID.Hex(), "error", err.Error())
 	}
 
 	return nil
