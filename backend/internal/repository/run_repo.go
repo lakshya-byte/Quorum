@@ -172,6 +172,8 @@ type RunCompletion struct {
 	PRNumber     int
 	PRBranch     string
 	FilesChanged int
+	BestPassed   int
+	BestTotal    int
 	Safety       map[string]any
 	Cost         *models.Cost
 	LangsmithURL string
@@ -207,6 +209,9 @@ func (r *RunRepository) Complete(ctx context.Context, agentRunID string, c RunCo
 	}
 	if c.FilesChanged > 0 {
 		set["files_changed"] = c.FilesChanged
+	}
+	if c.BestTotal > 0 {
+		set["best_passed"], set["best_total"] = c.BestPassed, c.BestTotal
 	}
 	if c.Safety != nil {
 		set["safety"] = c.Safety
@@ -257,6 +262,9 @@ func ApplyCompletion(prev models.Run, c RunCompletion, now time.Time) *models.Ru
 	}
 	if c.FilesChanged > 0 {
 		cur.FilesChanged = c.FilesChanged
+	}
+	if c.BestTotal > 0 {
+		cur.BestPassed, cur.BestTotal = c.BestPassed, c.BestTotal
 	}
 	if c.Safety != nil {
 		cur.Safety = c.Safety

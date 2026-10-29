@@ -534,11 +534,12 @@ func (s *RunService) Complete(ctx context.Context, agentRunID string, p Complete
 		before, after *models.Run
 		err           error
 	)
+	bp, bt := bestTests(p.Nodes, p.BestNodeID)
 	for attempt := 0; attempt < 20; attempt++ {
 		before, after, err = s.runs.Complete(ctx, agentRunID, repository.RunCompletion{
 			Mode: p.Mode, Engine: p.Engine, Solved: p.Solved, BestNodeID: p.BestNodeID,
 			Nodes: p.Nodes, Usage: p.Usage, LatencyMs: int64(p.LatencyMs),
-			PRURL: p.PRURL, PRNumber: p.PRNumber, PRBranch: p.PRBranch, FilesChanged: countFiles(p.FilesChanged),
+			PRURL: p.PRURL, PRNumber: p.PRNumber, PRBranch: p.PRBranch, FilesChanged: countFiles(p.FilesChanged), BestPassed: bp, BestTotal: bt,
 			Safety: p.Safety, Cost: costFromUsage(p.Usage), LangsmithURL: p.LangsmithURL,
 		})
 		if !errors.Is(err, repository.ErrNotFound) {
@@ -688,4 +689,28 @@ func countFiles(v any) int {
 		return 0
 	}
 	return n
+}
+
+// bestTests returns passed/total of the best node (the winner, else the node
+// passing the largest share of tests), so run lists need not load all nodes.
+func bestTests(nodes []any, best any) (int, int) {
+	pass, total, ratio, found := 0, 0, -1.0, false
+	for _, n := range nodes {
+		m, ok := n.(map[string]any)
+		if !ok {
+			continue
+		}
+		p, _ := toInt(m["passed"])
+		t, _ := toInt(m["total"])
+		if t == 0 {
+			continue
+		}
+		if best != nil && fmt.Sprint(m["id"]) == fmt.Sprint(best) {
+			return p, t
+		}
+		if r := float64(p) / float64(t); !found && r > ratio {
+			pass, total, ratio = p, t, r
+		}
+	}
+	return pass, total
 }

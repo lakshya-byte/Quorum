@@ -18,15 +18,16 @@ func (e *MergeRefusedError) Error() string { return e.Reason }
 
 // PRInfo is GET /api/runs/:id/pr.
 type PRInfo struct {
-	URL          string        `json:"url"`
-	Number       int           `json:"number"`
-	State        string        `json:"state"` // open | closed | merged
-	Mergeable    *bool         `json:"mergeable"`
-	Checks       ChecksSummary `json:"checks"`
-	MergeAllowed bool          `json:"mergeAllowed"`
-	Reason       string        `json:"reason"`
-	Warning      string        `json:"warning,omitempty"`
-	Fake         bool          `json:"fake,omitempty"`
+	URL          string         `json:"url"`
+	Number       int            `json:"number"`
+	State        string         `json:"state"` // open | closed | merged
+	Mergeable    *bool          `json:"mergeable"`
+	Checks       ChecksSummary  `json:"checks"`
+	MergeAllowed bool           `json:"mergeAllowed"`
+	Reason       string         `json:"reason"`
+	Warning      string         `json:"warning,omitempty"`
+	Fake         bool           `json:"fake,omitempty"`
+	Merged       *models.Merged `json:"merged,omitempty"`
 }
 
 // MergeResult is the answer of a successful merge.
@@ -103,6 +104,7 @@ func (m *MergeService) Info(ctx context.Context, run *models.Run) (*PRInfo, erro
 			info.State = "merged"
 		}
 		evaluate(info)
+		info.Merged = run.Merged
 		return info, nil
 	}
 	auth, err := m.github.AgentToken(ctx, run.UserID)
@@ -131,6 +133,7 @@ func (m *MergeService) Info(ctx context.Context, run *models.Run) (*PRInfo, erro
 		info.Checks = ChecksSummary{State: "none", Failing: []string{}}
 	}
 	evaluate(info)
+	info.Merged = run.Merged
 	return info, nil
 }
 
