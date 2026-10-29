@@ -24,6 +24,10 @@ type Config struct {
 	CookieSecure      bool
 	CookieDomain      string
 
+	// Clerk (browser auth). The secret key verifies session tokens and reads users.
+	ClerkSecretKey string
+	ClerkAPIURL    string // override for tests; defaults to https://api.clerk.com
+
 	// Agent service (internal only).
 	AgentURL          string
 	AgentSharedSecret string
@@ -92,6 +96,8 @@ func Load() *Config {
 		OTPTTLMin:         getEnvInt("OTP_TTL_MIN", 10),
 		CookieSecure:      getEnv("COOKIE_SECURE", "false") == "true",
 		CookieDomain:      getEnv("COOKIE_DOMAIN", "localhost"),
+		ClerkSecretKey:    mustGetEnv("CLERK_SECRET_KEY"),
+		ClerkAPIURL:       os.Getenv("CLERK_API_URL"),
 
 		AgentURL:          strings.TrimRight(getEnv("AGENT_URL", "http://localhost:8001"), "/"),
 		AgentSharedSecret: mustGetEnv("AGENT_SHARED_SECRET"),

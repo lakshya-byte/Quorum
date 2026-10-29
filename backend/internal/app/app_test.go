@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -22,6 +25,7 @@ import (
 	"patchloop-backend/internal/fakeagent"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
@@ -76,6 +80,68 @@ type env struct {
 	agent   *fakeagent.Agent
 	slack   *slackSink
 	cfg     *config.Config
+	clerk   *fakeClerk
+}
+
+// fakeClerk stands in for Clerk's Backend API (/v1/jwks, /v1/users/:id) and
+// mints session tokens signed with its own key.
+type fakeClerk struct {
+	key    *rsa.PrivateKey
+	server *httptest.Server
+	mu     sync.Mutex
+	emails map[string]string // clerk user id -> email
+}
+
+func newFakeClerk(t *testing.T) *fakeClerk {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeClerk{key: key, emails: map[string]string{}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/jwks", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{
+			"kid": "test-kid", "kty": "RSA", "alg": "RS256",
+			"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
+			"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
+		}}})
+	})
+	mux.HandleFunc("/v1/users/", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		email := f.emails[strings.TrimPrefix(r.URL.Path, "/v1/users/")]
+		f.mu.Unlock()
+		if email == "" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"first_name": "Acme", "last_name": "Inc", "primary_email_address_id": "idn_1",
+			"email_addresses": []map[string]string{{"id": "idn_1", "email_address": email}},
+		})
+	})
+	f.server = httptest.NewServer(mux)
+	t.Cleanup(f.server.Close)
+	return f
+}
+
+func (f *fakeClerk) token(t *testing.T, clerkID string, exp time.Time) string {
+	t.Helper()
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"sub": clerkID, "exp": exp.Unix()})
+	tok.Header["kid"] = "test-kid"
+	s, err := tok.SignedString(f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+type bearerRT struct{ token string }
+
+func (b bearerRT) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("Authorization", "Bearer "+b.token)
+	return http.DefaultTransport.RoundTrip(r)
 }
 
 func newEnv(t *testing.T, mutate func(*config.Config)) *env {
@@ -99,7 +165,10 @@ func newEnv(t *testing.T, mutate func(*config.Config)) *env {
 	}))
 	t.Cleanup(slackSv.Close)
 
+	fc := newFakeClerk(t)
 	cfg := &config.Config{
+		ClerkSecretKey:        "sk_test",
+		ClerkAPIURL:           fc.server.URL,
 		JWTAccessSecret:       "access-secret-for-tests",
 		JWTRefreshSecret:      "refresh-secret-for-tests",
 		JWTAccessTTLMin:       15,
@@ -123,7 +192,7 @@ func newEnv(t *testing.T, mutate func(*config.Config)) *env {
 	backend := httptest.NewServer(a.Router)
 	t.Cleanup(backend.Close)
 	agent.SetCallbackURL(backend.URL)
-	return &env{t: t, backend: backend, agentSv: agentSv, agent: agent, slack: sink, cfg: cfg}
+	return &env{t: t, backend: backend, agentSv: agentSv, agent: agent, slack: sink, cfg: cfg, clerk: fc}
 }
 
 func (e *env) do(client *http.Client, method, path string, body any, hdr map[string]string) (int, map[string]any, []byte) {
@@ -154,26 +223,18 @@ func (e *env) do(client *http.Client, method, path string, body any, hdr map[str
 	return resp.StatusCode, m, raw
 }
 
-// newUser signs up in DEV_MODE, reads the OTP from /internal/dev/otp,
-// verifies it and returns a client holding the auth cookies.
+// newUser returns a client that sends a valid Clerk session token for a
+// fresh Clerk user; the backend provisions the local account on first use.
 func (e *env) newUser() (*http.Client, string) {
 	e.t.Helper()
-	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar}
-	email := fmt.Sprintf("user%d-%d@example.com", time.Now().UnixNano(), emailSeq.Add(1))
-	st, _, raw := e.do(client, "POST", "/api/auth/signup", map[string]any{"email": email, "password": "password123", "companyName": "Acme"}, nil)
-	if st != 201 {
-		e.t.Fatalf("signup: %d %s", st, raw)
-	}
-	st, otp, raw := e.do(nil, "GET", "/internal/dev/otp?email="+email, nil, map[string]string{"X-Agent-Secret": testSecret})
-	if st != 200 {
-		e.t.Fatalf("dev otp: %d %s", st, raw)
-	}
-	st, _, raw = e.do(client, "POST", "/api/auth/verify-otp", map[string]any{"email": email, "code": otp["code"]}, nil)
-	if st != 200 {
-		e.t.Fatalf("verify: %d %s", st, raw)
-	}
-	return client, email
+	n := emailSeq.Add(1)
+	clerkID := fmt.Sprintf("user_%d_%d", time.Now().UnixNano(), n)
+	email := fmt.Sprintf("user%d-%d@example.com", time.Now().UnixNano(), n)
+	e.clerk.mu.Lock()
+	e.clerk.emails[clerkID] = email
+	e.clerk.mu.Unlock()
+	tok := e.clerk.token(e.t, clerkID, time.Now().Add(time.Hour))
+	return &http.Client{Transport: bearerRT{tok}}, email
 }
 
 type sseEvent struct {
@@ -616,5 +677,36 @@ func TestClientDisconnectCancelsUpstream(t *testing.T) {
 	_, run, _ := e.do(client, "GET", "/api/runs/"+r["runId"].(string), nil, nil)
 	if run["status"] != "running" {
 		t.Fatalf("upstream was not cancelled; run status %v", run["status"])
+	}
+}
+
+func TestClerkAuth(t *testing.T) {
+	e := newEnv(t, nil)
+	client, email := e.newUser()
+
+	st, a, _ := e.do(client, "GET", "/api/auth/me", nil, nil)
+	st2, b, _ := e.do(client, "GET", "/api/auth/me", nil, nil)
+	if st != 200 || st2 != 200 || a["user"].(map[string]any)["id"] != b["user"].(map[string]any)["id"] || a["user"].(map[string]any)["email"] != email {
+		t.Fatalf("repeat requests must map to one local user: %d %v / %d %v", st, a, st2, b)
+	}
+
+	// ?token= is how EventSource authenticates.
+	tok := e.clerk.token(t, "user_unknown", time.Now().Add(time.Hour))
+	e.clerk.mu.Lock()
+	e.clerk.emails["user_unknown"] = "q-" + email
+	e.clerk.mu.Unlock()
+	if st, _, raw := e.do(nil, "GET", "/api/auth/me?token="+tok, nil, nil); st != 200 {
+		t.Fatalf("query token: %d %s", st, raw)
+	}
+
+	expired := e.clerk.token(t, "user_unknown", time.Now().Add(-time.Minute))
+	for name, hdr := range map[string]map[string]string{
+		"expired": {"Authorization": "Bearer " + expired},
+		"garbage": {"Authorization": "Bearer not.a.jwt"},
+		"none":    nil,
+	} {
+		if st, _, _ := e.do(nil, "GET", "/api/auth/me", nil, hdr); st != 401 {
+			t.Fatalf("%s token: got %d, want 401", name, st)
+		}
 	}
 }

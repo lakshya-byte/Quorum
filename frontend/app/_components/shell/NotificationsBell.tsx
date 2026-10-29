@@ -12,7 +12,7 @@ export default function NotificationsBell() {
 
   const load = useCallback(async () => {
     try {
-      setItems((await notificationsApi.list()) || []);
+      setItems((await notificationsApi.list()).notifications || []);
     } catch {
       // the bell is optional; stay quiet if the endpoint is unavailable
     }

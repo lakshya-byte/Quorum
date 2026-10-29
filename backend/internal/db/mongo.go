@@ -47,6 +47,7 @@ func EnsureIndexes(ctx context.Context, database *mongo.Database) error {
 	}
 	indexes := []idx{
 		{"users", mongo.IndexModel{Keys: bson.D{{Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)}},
+		{"users", mongo.IndexModel{Keys: bson.D{{Key: "clerk_id", Value: 1}}, Options: options.Index().SetUnique(true).SetSparse(true)}},
 		{"otps", mongo.IndexModel{Keys: bson.D{{Key: "expires_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)}},
 		{"refresh_tokens", mongo.IndexModel{Keys: bson.D{{Key: "expires_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)}},
 		{"runs", mongo.IndexModel{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "created_at", Value: -1}}}},

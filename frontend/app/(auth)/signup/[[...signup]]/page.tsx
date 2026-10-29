@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import SignUpCard from "../_components/SignUpCard";
+import SignUpCard from "../../_components/SignUpCard";
 
 export const metadata: Metadata = {
   title: "Sign Up — PatchLoop",

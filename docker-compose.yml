@@ -67,6 +67,9 @@ services:
       context: ./frontend
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set the Clerk publishable key}
+    environment:
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?set the Clerk secret key}
     ports:
       - "3000:3000"
     depends_on:

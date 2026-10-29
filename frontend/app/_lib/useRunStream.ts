@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useReducer, useRef, useState, type Dispatch } from "react";
-import { refreshSession, type Run } from "./api";
+import { getAuthToken, type Run } from "./api";
+// import { refreshSession } from "./api"; // cookie refresh, replaced by Clerk
 import { initialRunState, isFinishedRun, runReducer, type RunState, type RunAction, type StreamMessage } from "./runState";
 
 const MAX_ATTEMPTS = 6;
@@ -37,10 +38,18 @@ export function useRunStream(url: string | null, opts: { withCredentials?: boole
     let attempt = 0;
     let disposed = false;
 
-    const open = () => {
+    const open = async () => {
       if (disposed) return;
       dispatch({ kind: "connecting", at: performance.now() });
-      es = new EventSource(url, { withCredentials });
+      // EventSource cannot set headers, so authed streams pass the Clerk token
+      // as ?token=. Fetched fresh on every (re)connect since it is short-lived.
+      let target = url;
+      if (withCredentials) {
+        const token = await getAuthToken();
+        if (token) target += `${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+        if (disposed) return;
+      }
+      es = new EventSource(target);
       es.onopen = () => {
         attempt = 0;
       };
@@ -68,12 +77,7 @@ export function useRunStream(url: string | null, opts: { withCredentials?: boole
         }
         dispatch({ kind: "reconnecting", attempt });
         const delay = Math.min(1000 * 2 ** (attempt - 1), 10000);
-        timer = setTimeout(async () => {
-          // The access cookie may have expired mid-run; EventSource cannot
-          // see the 401, so refresh once before every retry of an authed stream.
-          if (withCredentials && attempt === 1) await refreshSession();
-          open();
-        }, delay);
+        timer = setTimeout(open, delay);
       };
     };
 

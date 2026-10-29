@@ -66,8 +66,8 @@ the browser bundle, so rebuild the frontend image when the public backend URL ch
 | Service | Required | Optional (see each `.env.example`) |
 |---|---|---|
 | agent | `AGENT_SHARED_SECRET` (unset = every route but `/health` answers 401), `BACKEND_CALLBACK_URL` | `PATCHLOOP_MODE`, `PATCHLOOP_ENGINE`, `NEBIUS_API_KEY`, `NEBIUS_PROJECT_ID`, `MODEL_NANO/SUPER/ULTRA`, budgets `RUN_MAX_*`, `GUARD_*`, `NVIDIA_API_KEY`, `GITHUB_TOKEN`, `GITHUB_REPO`, `LANGSMITH_*`, `NEW_RELIC_*` |
-| backend | `AGENT_SHARED_SECRET` (same value), `AGENT_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `MONGO_URI`, `RESEND_API_KEY` (unless `DEV_MODE=true`) | `FRONTEND_ORIGIN` (CORS, credentials), `PUBLIC_APP_URL`, `COOKIE_SECURE`, `COOKIE_DOMAIN`, `SLACK_WEBHOOK_URL`, `NEW_RELIC_LICENSE_KEY`, `LIVE_RUNS_PER_USER_PER_DAY`, `GUEST_RUNS_PER_HOUR`, `TRUSTED_PROXIES` |
-| frontend | `NEXT_PUBLIC_API_URL` (build time) | - |
+| backend | `AGENT_SHARED_SECRET` (same value), `AGENT_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `MONGO_URI`, `CLERK_SECRET_KEY`, `RESEND_API_KEY` (unless `DEV_MODE=true`) | `FRONTEND_ORIGIN` (CORS, credentials), `PUBLIC_APP_URL`, `COOKIE_SECURE`, `COOKIE_DOMAIN`, `SLACK_WEBHOOK_URL`, `NEW_RELIC_LICENSE_KEY`, `LIVE_RUNS_PER_USER_PER_DAY`, `GUEST_RUNS_PER_HOUR`, `TRUSTED_PROXIES` |
+| frontend | `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` (build time), `CLERK_SECRET_KEY` (runtime) | - |
 | CLI | - | `PATCHLOOP_API`, `PATCHLOOP_CONFIG`, `NO_COLOR` |
 
 ### Which keys unlock which live features

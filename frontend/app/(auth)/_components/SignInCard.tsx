@@ -5,7 +5,10 @@ import Image from "next/image";
 import Link from "next/link";
 import signinBackground from "@/public/signin-bg.png";
 import signinVignette from "@/public/signin-bg-vignette.png";
-import { SignInForm } from "./AuthForms";
+import { SignIn } from "@clerk/nextjs";
+import { clerkAppearance } from "./clerkAppearance";
+// Replaced by Clerk:
+// import { SignInForm } from "./AuthForms";
 
 
 export default function SignInCard() {
@@ -118,7 +121,13 @@ export default function SignInCard() {
               </p>
             </header>
 
-            <SignInForm />
+            <SignIn
+              path="/signin"
+              signUpUrl="/signup"
+              fallbackRedirectUrl="/dashboard"
+              appearance={clerkAppearance}
+            />
+            {/* <SignInForm /> */}
 
             <p className="mt-5 text-center text-[12px] text-on-surface-variant">
               Just looking?{" "}

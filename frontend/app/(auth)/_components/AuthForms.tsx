@@ -150,9 +150,9 @@ export function SignInForm() {
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [needsOtp, setNeedsOtp] = useState(false);
-
-  if (needsOtp) return <OtpForm email={email} onBack={() => setNeedsOtp(false)} />;
+  // Email verification disabled for now:
+  // const [needsOtp, setNeedsOtp] = useState(false);
+  // if (needsOtp) return <OtpForm email={email} onBack={() => setNeedsOtp(false)} />;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -162,16 +162,16 @@ export function SignInForm() {
       await authApi.login(email.trim(), password);
       router.push(nextPath());
     } catch (err) {
-      if (err instanceof ApiError && err.code === "EMAIL_NOT_VERIFIED") {
-        try {
-          await authApi.resendOtp(email.trim());
-        } catch {
-          // the OTP screen offers a resend button
-        }
-        setNeedsOtp(true);
-      } else {
-        setError(errorMessage(err));
-      }
+      // if (err instanceof ApiError && err.code === "EMAIL_NOT_VERIFIED") {
+      //   try {
+      //     await authApi.resendOtp(email.trim());
+      //   } catch {
+      //     // the OTP screen offers a resend button
+      //   }
+      //   setNeedsOtp(true);
+      // } else {
+      setError(errorMessage(err));
+      // }
       setBusy(false);
     }
   };
@@ -225,9 +225,10 @@ export function SignUpForm() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [step, setStep] = useState<"form" | "otp">("form");
-
-  if (step === "otp") return <OtpForm email={email.trim()} onBack={() => setStep("form")} />;
+  const router = useRouter();
+  // Email verification disabled for now:
+  // const [step, setStep] = useState<"form" | "otp">("form");
+  // if (step === "otp") return <OtpForm email={email.trim()} onBack={() => setStep("form")} />;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -235,7 +236,9 @@ export function SignUpForm() {
     setError(null);
     try {
       await authApi.signup(email.trim(), password, company.trim());
-      setStep("otp");
+      await authApi.login(email.trim(), password);
+      router.push(nextPath());
+      // setStep("otp");
     } catch (err) {
       setError(errorMessage(err));
     } finally {

@@ -4,7 +4,10 @@ import { Icon } from "../../_ui";
 import Image from "next/image";
 import Link from "next/link";
 import signupBackground from "@/public/signup-bg.png";
-import { SignUpForm } from "./AuthForms";
+import { SignUp } from "@clerk/nextjs";
+import { clerkAppearance } from "./clerkAppearance";
+// Replaced by Clerk:
+// import { SignUpForm } from "./AuthForms";
 
 export default function SignUpCard() {
   return (
@@ -92,7 +95,13 @@ export default function SignUpCard() {
               </p>
             </div>
 
-            <SignUpForm />
+            <SignUp
+              path="/signup"
+              signInUrl="/signin"
+              fallbackRedirectUrl="/dashboard"
+              appearance={clerkAppearance}
+            />
+            {/* <SignUpForm /> */}
 
           </section>
 

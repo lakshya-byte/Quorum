@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, JetBrains_Mono } from "next/font/google";
+import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -20,6 +21,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
+    <ClerkProvider signInUrl="/signin" signUpUrl="/signup" signInFallbackRedirectUrl="/dashboard" signUpFallbackRedirectUrl="/dashboard">
     <html
       lang="en"
       className={`${geistSans.variable} ${jetbrainsMono.variable} h-full dark`}
@@ -28,5 +30,6 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         {children}
       </body>
     </html>
+    </ClerkProvider>
   );
 }
