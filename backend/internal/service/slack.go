@@ -125,7 +125,7 @@ func (s *SlackNotifier) Post(ctx context.Context, payload map[string]any) (int, 
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.WebhookURL, bytes.NewReader(b))
 	if err != nil {
-		return 0, err
+		return 0, errors.New("invalid SLACK_WEBHOOK_URL")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := s.client.Do(req)
