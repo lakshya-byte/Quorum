@@ -32,7 +32,9 @@ func New(base, token string) *Client {
 // Error is a non-2xx API answer ({"error": "..."}).
 type Error struct {
 	Status  int
+	Code    string // stable machine-readable code from {"error","code"}
 	Message string
+	Extra   map[string]any
 }
 
 func (e *Error) Error() string { return fmt.Sprintf("%s (HTTP %d)", e.Message, e.Status) }
@@ -62,17 +64,19 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body any) 
 
 func apiError(resp *http.Response) error {
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	var m struct {
-		Error string `json:"error"`
-	}
+	var m map[string]any
 	msg := strings.TrimSpace(string(raw))
-	if json.Unmarshal(raw, &m) == nil && m.Error != "" {
-		msg = m.Error
+	code := ""
+	if json.Unmarshal(raw, &m) == nil {
+		if e, ok := m["error"].(string); ok && e != "" {
+			msg = e
+		}
+		code, _ = m["code"].(string)
 	}
 	if msg == "" {
 		msg = http.StatusText(resp.StatusCode)
 	}
-	return &Error{Status: resp.StatusCode, Message: msg}
+	return &Error{Status: resp.StatusCode, Code: code, Message: msg, Extra: m}
 }
 
 // Do sends a JSON request and decodes a JSON response into out.
@@ -170,6 +174,23 @@ type Run struct {
 	Usage       map[string]any `json:"usage"`
 	CreatedAt   time.Time      `json:"createdAt"`
 	CompletedAt *time.Time     `json:"completedAt"`
+
+	Kind     string `json:"kind"`
+	Source   string `json:"source"`
+	Repo     string `json:"repo"`
+	Branch   string `json:"branch"`
+	Task     string `json:"task"`
+	PRNumber int    `json:"prNumber"`
+	PRBranch string `json:"prBranch"`
+	TraceID  string `json:"traceId"`
+	Merged   *struct {
+		By string    `json:"by"`
+		At time.Time `json:"at"`
+	} `json:"merged"`
+	Cost *struct {
+		Tokens int64   `json:"tokens"`
+		USD    float64 `json:"usd"`
+	} `json:"cost"`
 }
 
 func (c *Client) Runs(ctx context.Context) ([]Run, error) {

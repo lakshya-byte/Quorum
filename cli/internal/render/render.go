@@ -49,17 +49,18 @@ func (r *Renderer) line(depth int, s string) {
 }
 
 type node struct {
-	ID        any     `json:"id"`
-	Parent    any     `json:"parent"`
-	Depth     int     `json:"depth"`
-	Idea      string  `json:"idea"`
-	Strategy  string  `json:"strategy"`
-	Passed    int     `json:"passed"`
-	Total     int     `json:"total"`
-	Score     float64 `json:"score"`
-	Model     string  `json:"model"`
-	LatencyMs float64 `json:"latency_ms"`
-	Tokens    float64 `json:"tokens"`
+	ID        any            `json:"id"`
+	Parent    any            `json:"parent"`
+	Depth     int            `json:"depth"`
+	Idea      string         `json:"idea"`
+	Strategy  string         `json:"strategy"`
+	Passed    int            `json:"passed"`
+	Total     int            `json:"total"`
+	Score     float64        `json:"score"`
+	Model     string         `json:"model"`
+	LatencyMs float64        `json:"latency_ms"`
+	Tokens    float64        `json:"tokens"`
+	Files     map[string]any `json:"files"`
 	Policy    *struct {
 		OK      bool     `json:"ok"`
 		Reasons []string `json:"reasons"`
@@ -164,6 +165,9 @@ func (r *Renderer) Event(ev sse.Event) {
 		if n.Tokens > 0 {
 			meta = append(meta, fmt.Sprintf("%.0f tok", n.Tokens))
 		}
+		if len(n.Files) > 1 {
+			meta = append(meta, fmt.Sprintf("%d files", len(n.Files)))
+		}
 		if n.Policy != nil && !n.Policy.OK {
 			meta = append(meta, r.c(red, "policy: "+strings.Join(n.Policy.Reasons, "; ")))
 		}
@@ -204,13 +208,73 @@ func (r *Renderer) Event(ev sse.Event) {
 		r.line(0, head)
 		r.line(1, fmt.Sprintf("tokens %.0f (prompt %.0f + completion %.0f) · latency %s · first node %s",
 			d.Usage.Prompt+d.Usage.Completion, d.Usage.Prompt, d.Usage.Completion, fmtMs(d.LatencyMs), fmtMs(d.TTFN)))
+	case "repo":
+		var d struct {
+			FullName    string `json:"full_name"`
+			Branch      string `json:"branch"`
+			Files       any    `json:"files"`
+			Language    string `json:"language"`
+			TestCommand string `json:"test_command"`
+			Truncated   bool   `json:"truncated"`
+		}
+		_ = json.Unmarshal(ev.Data, &d)
+		s := fmt.Sprintf("%s repo %s@%s", r.c(cyan, "⎇"), r.c(bold, d.FullName), d.Branch)
+		s += r.c(dim, fmt.Sprintf("  %v files · %s · tests: %s", d.Files, d.Language, d.TestCommand))
+		if d.Truncated {
+			s += r.c(amber, "  (repo truncated: size cap)")
+		}
+		r.line(0, s)
+	case "locate":
+		var d struct {
+			Files []struct {
+				Path   string `json:"path"`
+				Reason string `json:"reason"`
+			} `json:"files"`
+		}
+		_ = json.Unmarshal(ev.Data, &d)
+		r.line(0, r.c(purple, "⌖ locate"))
+		for _, f := range d.Files {
+			r.line(1, fmt.Sprintf("%s %s", f.Path, r.c(dim, f.Reason)))
+		}
+	case "repro":
+		var d struct {
+			Path             string `json:"path"`
+			TestName         string `json:"test_name"`
+			FailedOnOriginal bool   `json:"failed_on_original"`
+			OutputTail       string `json:"output_tail"`
+		}
+		_ = json.Unmarshal(ev.Data, &d)
+		if d.FailedOnOriginal {
+			r.line(0, r.c(green, "✔ reproducer ")+fmt.Sprintf("%s (%s) fails on the original code", d.TestName, d.Path))
+		} else {
+			r.line(0, r.c(amber, "! no reproducer that fails on the original code; using the existing tests"))
+		}
 	case "pr":
 		var d struct {
-			URL string `json:"url"`
+			URL     string `json:"url"`
+			Number  int    `json:"number"`
+			Branch  string `json:"branch"`
+			Fake    bool   `json:"fake"`
+			Updated bool   `json:"updated"`
 		}
 		_ = json.Unmarshal(ev.Data, &d)
 		r.PRURL = d.URL
-		r.line(0, r.c(green, "⇪ PR opened: ")+d.URL)
+		verb := "opened"
+		if d.Updated {
+			verb = "updated (new commit)"
+		}
+		label := "PR"
+		if d.Number > 0 {
+			label = fmt.Sprintf("PR #%d", d.Number)
+		}
+		s := r.c(green, fmt.Sprintf("⇪ %s %s: ", label, verb)) + d.URL
+		if d.Branch != "" {
+			s += r.c(dim, "  branch "+d.Branch)
+		}
+		if d.Fake {
+			s += r.c(amber, "  [fake mode]")
+		}
+		r.line(0, s)
 	case "error":
 		var d struct {
 			Stage   string `json:"stage"`
