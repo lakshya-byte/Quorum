@@ -1,8 +1,8 @@
 const STATS = [
-  { label: "Time-To-First-Byte", value: "<18ms", icon: "bolt", color: "text-primary" },
-  { label: "Micro-VM Provisioning", value: "8.4ms", icon: "speed", color: "text-secondary" },
-  { label: "Sandbox Isolation", value: "100% Hermetic", icon: "security", color: "text-primary" },
-  { label: "Patch Verification", value: "Zero Speculation", icon: "fact_check", color: "text-secondary" },
+  { label: "Every attempt runs in", value: "Its own sandbox", icon: "deployed_code", color: "text-primary" },
+  { label: "What decides a fix", value: "The tests", icon: "fact_check", color: "text-secondary" },
+  { label: "Checks on every run", value: "Guardrails + policy", icon: "security", color: "text-primary" },
+  { label: "Who merges", value: "A human", icon: "person_check", color: "text-secondary" },
 ];
 
 export default function CredibilityStrip() {
@@ -16,13 +16,13 @@ export default function CredibilityStrip() {
           <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-widest text-on-surface-variant">
             <span className="material-symbols-outlined text-[16px] text-primary">memory</span>
             <span>
-              PROVED IN MICRO-VMS &bull; POWERED BY NEMOTRON-70B &bull; NEBIUS TOKEN
-              FACTORY LOW-LATENCY INFERENCE
+              ISOLATED NEBIUS SANDBOXES &bull; NEMOTRON MODELS VIA NEBIUS TOKEN FACTORY
+              &bull; LANGGRAPH AGENT TEAM
             </span>
           </div>
           <span className="font-mono text-[11px] text-secondary flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
-            HERMETIC ISOLATION MODE
+            AGENTS NEVER PUSH TO MAIN
           </span>
         </div>
 

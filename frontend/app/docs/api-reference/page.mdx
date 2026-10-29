@@ -105,3 +105,95 @@ exposed):
   "emailVerified": true
 }
 ```
+
+## Authentication for everything else
+
+Every endpoint below (except `/api/demo/*`) accepts either the access cookie
+set by `verify-otp` / `login`, or an API token sent as
+`Authorization: Bearer plk_...` (create one under **Settings → API tokens**,
+or with `POST /api/tokens`). The web app retries a request once after
+`POST /api/auth/refresh` when it gets a `401`.
+
+## `GET /api/bugs`
+
+The demo bugs you can fix: `[{ id, title, issue, tier }]`.
+
+## `POST /api/runs`
+
+Starts a fix run.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `bugId` | string | required, an id from `GET /api/bugs` |
+| `engine` | `"graph"` or `"loop"` | `graph` = LangGraph agent team, `loop` = older single-agent loop |
+| `replay` | boolean | re-stream a recorded real run for this bug when one exists |
+
+**Response:** `{ runId, mode, engine, notice? }`. `mode` is the mode actually
+used (`fake`, `hybrid`, `live` or `replay`); `notice` explains a fallback,
+for example when no recorded run exists.
+
+## `GET /api/runs`
+
+Your runs, newest first: `[Run]`.
+
+## `GET /api/runs/:id`
+
+```json
+{
+  "id": "…", "userId": "…", "bugId": "paginate", "agentRunId": "…",
+  "mode": "fake", "engine": "graph", "status": "completed",
+  "solved": true, "bestNodeId": 5, "nodes": [],
+  "usage": { "prompt_tokens": 4645, "completion_tokens": 1310 },
+  "latencyMs": 5100, "prUrl": null,
+  "createdAt": "…", "completedAt": "…"
+}
+```
+
+`nodes` holds the node objects described below.
+
+## `GET /api/runs/:id/events`
+
+Server-sent events, relayed unchanged from the agent service. Each message is
+`data: {"type": T, "data": {...}}` followed by a blank line. Events already
+emitted are replayed first, so a client can connect late or reconnect.
+
+| `type` | `data` |
+| --- | --- |
+| `run_started` | `{ run_id, bug_id, mode, engine }` |
+| `guard` | `{ stage, verdict, reasons, latency_ms }` with `stage` one of `input`, `output` (the policy gate result is on each `node.policy`) and `verdict` one of `pass`, `block` |
+| `triage` | `{ cause, strategies }` |
+| `round` | `{ depth }` |
+| `node` | `{ id, parent, depth, idea, strategy, code, output, passed, total, score, model, latency_ms, tokens, policy: { ok, reasons }, security: { ok, new_findings } }` |
+| `critic` | `{ node_id, lesson }` |
+| `done` | `{ solved, best, usage: { prompt_tokens, completion_tokens }, latency_ms, time_to_first_node_ms }`; `best` is the best node object (or `null`) |
+| `pr` | `{ url }` |
+| `error` | `{ stage, message }` |
+| `end` | always last; close the stream |
+
+Node `0` is the original buggy code (`parent: null`, `depth: 0`). Runs of the
+`loop` engine send no `guard`, `triage` or `critic` events, and their nodes may
+lack `strategy`, `latency_ms`, `tokens`, `policy` and `security`.
+
+## `POST /api/runs/:id/pr`
+
+Opens a GitHub pull request with the winning fix and its test output and
+returns `{ url }`; `400` when the run is not solved. Agents never merge or
+push to main: a human reviews and merges the pull request.
+
+## API tokens
+
+| Method | Path | Result |
+| --- | --- | --- |
+| `POST` | `/api/tokens` | body `{ name }`, returns `{ token }`. The plaintext token (prefix `plk_`) is shown once. |
+| `GET` | `/api/tokens` | `[{ id, name, prefix, createdAt, lastUsedAt }]` |
+| `DELETE` | `/api/tokens/:id` | revokes the token |
+
+## Guest demo (no login)
+
+| Method | Path | Result |
+| --- | --- | --- |
+| `GET` | `/api/demo/bugs` | `[{ id, title, issue, tier }]` |
+| `POST` | `/api/demo/runs` | body `{ bugId }`, returns `{ runId, mode, engine }`. Replay or fake mode only; 3 runs per hour per IP, then `429` with `{ error }`. |
+| `GET` | `/api/demo/runs/:id/events` | the same event stream as above |
+
+This is what the public [/try](/try) page uses.

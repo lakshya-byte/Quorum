@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef } from "react";
+import Link from "next/link";
 import Image from "next/image";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
 import ProverDashboard from "./ProverDashboard";
-import { smoothScrollTo } from "../../_lib/lenis";
 import heroBackground from "@/public/landing_hero_background.png";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger);
@@ -14,7 +14,6 @@ gsap.registerPlugin(useGSAP, ScrollTrigger);
 export default function Hero() {
   const rootRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLDivElement>(null);
-  const [booting, setBooting] = useState(false);
 
   useGSAP(
     () => {
@@ -70,27 +69,6 @@ export default function Hero() {
     { scope: rootRef }
   );
 
-  const runDemo = () => {
-    if (booting) return;
-    setBooting(true);
-    window.setTimeout(() => {
-      setBooting(false);
-      smoothScrollTo("#prover-dashboard");
-    }, 500);
-  };
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        runDemo();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booting]);
-
   return (
     <div ref={rootRef} className="relative w-full overflow-hidden">
       {/* Hero background image */}
@@ -135,8 +113,7 @@ export default function Hero() {
         <div className="hero-pill inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-surface-container-low border border-outline-variant/60 shadow-lg shadow-black/40">
           <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
           <code className="font-mono text-[11px] text-on-surface-variant flex items-center gap-1.5">
-            <span className="text-primary font-semibold">$</span> patchloop --prove
-            --sandbox=isolated --mode=firecracker
+            <span className="text-primary font-semibold">$</span> patchloop fix paginate
             <span className="inline-block w-1.5 h-3 bg-primary animate-pulse ml-0.5" />
           </code>
         </div>
@@ -145,44 +122,35 @@ export default function Hero() {
           Don&apos;t suggest code fixes.
           <br className="hidden sm:inline" />
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-primary to-secondary">
-            Prove them.
+            Prove them with tests.
           </span>
         </h1>
 
         <p className="hero-sub mt-5 max-w-2xl text-[16px] leading-relaxed text-on-surface-variant">
-          PatchLoop autonomously isolates failing code, synthesizes verified patches,
-          and compiles them in a dedicated ephemeral micro-VM. If the test suite
-          doesn&apos;t turn green, the PR is never filed.
+          A team of AI agents proposes fixes in parallel, each in its own isolated
+          Nebius Sandbox. The tests decide which fix is good, never the AI. Guardrails
+          and a policy gate check every step, a pull request opens with the proof,
+          and a human reviews and merges it.
         </p>
 
         <div className="hero-cta mt-8 flex flex-col sm:flex-row items-center gap-3">
-          <button
-            onClick={runDemo}
-            className="group relative inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg bg-primary text-black text-[14px] font-semibold shadow-[0_0_24px_rgba(16,185,129,0.35)] hover:bg-[#34d399] transition-all duration-200 disabled:opacity-80"
-            disabled={booting}
+          <Link
+            href="/try"
+            className="group relative inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg bg-primary text-black text-[14px] font-semibold shadow-[0_0_24px_rgba(16,185,129,0.35)] hover:bg-[#34d399] transition-all duration-200"
           >
-            {booting ? (
-              <>
-                <span className="material-symbols-outlined text-[18px] animate-spin">refresh</span>
-                <span>Booting Ephemeral Firecracker VM...</span>
-              </>
-            ) : (
-              <>
-                <span className="material-symbols-outlined text-[18px]">play_arrow</span>
-                <span>Launch Live Sandbox Demo</span>
-                <span className="material-symbols-outlined text-[16px] transition-transform duration-200 group-hover:translate-x-1">
-                  arrow_forward
-                </span>
-              </>
-            )}
-          </button>
-          <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-container-low/70 border border-outline-variant/40 text-on-surface-variant font-mono text-[11px]">
-            <span>Press</span>
-            <kbd className="px-1.5 py-0.5 rounded bg-surface-container-high text-white text-[11px] border border-outline-variant/60">
-              ⌘K
-            </kbd>
-            <span>or click to run demo</span>
-          </div>
+            <span className="material-symbols-outlined text-[18px]">play_arrow</span>
+            <span>Try the live demo</span>
+            <span className="material-symbols-outlined text-[16px] transition-transform duration-200 group-hover:translate-x-1">
+              arrow_forward
+            </span>
+          </Link>
+          <Link
+            href="/docs/getting-started"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-surface-container-low/70 border border-outline-variant/40 text-on-surface-variant hover:text-white text-[13px]"
+          >
+            <span className="material-symbols-outlined text-[16px]">menu_book</span>
+            <span>How it works</span>
+          </Link>
         </div>
 
         <div className="hero-dashboard w-full flex justify-center">

@@ -1,26 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import signupBackground from "@/public/signup-bg.png";
+import { SignUpForm } from "./AuthForms";
 
 export default function SignUpCard() {
-  const [passkeyFlash, setPasskeyFlash] = useState(false);
-
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (event.code === "Space" && target?.tagName !== "INPUT") {
-        event.preventDefault();
-        setPasskeyFlash(true);
-        window.setTimeout(() => setPasskeyFlash(false), 150);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, []);
-
   return (
     <div className="relative min-h-screen w-full overflow-hidden flex flex-col">
       {/* Ambient backdrop */}
@@ -102,77 +87,11 @@ export default function SignUpCard() {
             <div className="text-center mb-7">
               <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">Create your account</h1>
               <p className="mt-2 text-sm text-on-surface-variant max-w-sm mx-auto leading-relaxed">
-                Start proving your fixes in an isolated sandbox — free while in beta.
+                Fixes are proposed by agents, proven by tests in isolated sandboxes, and merged by you.
               </p>
             </div>
 
-            {/* Passkey */}
-            <div className="relative group p-5 rounded-xl bg-gradient-to-b from-surface-container-low to-surface-container border border-primary/30 shadow-[0_0_35px_-5px_rgba(16,185,129,0.25)] hover:border-primary/50 transition-all duration-300 text-center">
-              <div className="relative w-16 h-16 mx-auto flex items-center justify-center mb-3">
-                <div className="absolute inset-0 rounded-full border border-primary/20 animate-radar-slow" />
-                <div className="absolute -inset-2 rounded-full border border-primary/10 animate-radar-fast" />
-                <div className="relative w-12 h-12 rounded-full bg-primary/10 border border-primary/40 flex items-center justify-center text-primary shadow-[0_0_15px_rgba(16,185,129,0.3)] group-hover:scale-105 transition-transform duration-300">
-                  <span className="material-symbols-outlined text-[24px]">fingerprint</span>
-                </div>
-              </div>
-              <button
-                type="button"
-                id="passkey-trigger-btn"
-                className={`w-full py-3 px-4 rounded-lg text-bg font-semibold text-sm transition-all duration-150 shadow-md flex items-center justify-center gap-2 group-active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-surface-container ${
-                  passkeyFlash ? "scale-[0.98] bg-primary/70" : "bg-primary hover:bg-primary/90"
-                }`}
-              >
-                <span>Continue with a passkey</span>
-              </button>
-              <p className="mt-2.5 text-[11px] text-on-surface-variant">
-                Touch ID, Windows Hello, or a security key
-              </p>
-            </div>
-
-            <div className="relative my-6 text-center">
-              <div aria-hidden className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-white/10" />
-              </div>
-              <div className="relative flex justify-center text-xs">
-                <span className="bg-surface-container-lowest px-3 font-mono uppercase tracking-widest text-[11px] text-on-surface-variant/70">
-                  or
-                </span>
-              </div>
-            </div>
-
-            <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
-              <div>
-                <label className="block text-xs font-medium text-on-surface mb-1.5" htmlFor="corporate-email">
-                  Work email
-                </label>
-                <input
-                  id="corporate-email"
-                  type="email"
-                  placeholder="you@company.com"
-                  className="w-full px-3.5 py-2.5 bg-surface-container-low border border-white/10 rounded-lg text-sm text-on-surface placeholder-on-surface-variant/60 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-on-surface mb-1.5" htmlFor="org-name">
-                  Company name
-                </label>
-                <input
-                  id="org-name"
-                  type="text"
-                  placeholder="Your company"
-                  className="w-full px-3.5 py-2.5 bg-surface-container-low border border-white/10 rounded-lg text-sm text-on-surface placeholder-on-surface-variant/60 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-2.5 px-4 rounded-lg bg-surface-bright hover:bg-outline border border-white/10 text-white font-medium text-sm transition duration-150 flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-white/20 shadow-sm"
-              >
-                <span>Create account</span>
-                <span className="material-symbols-outlined text-[16px] text-primary">arrow_forward</span>
-              </button>
-            </form>
+            <SignUpForm />
 
             <p className="mt-5 text-center text-[11px] text-on-surface-variant/70 leading-relaxed">
               By creating an account, you agree to our{" "}
@@ -187,10 +106,12 @@ export default function SignUpCard() {
             </p>
           </section>
 
-          <div className="mt-6 flex items-center justify-center gap-1.5 text-[11px] font-mono text-on-surface-variant">
-            <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-            <span>SOC 2 Type II certified</span>
-          </div>
+          <p className="mt-6 text-center text-[12px] text-on-surface-variant">
+            Just looking?{" "}
+            <Link href="/try" className="text-primary hover:text-primary/80">
+              Try the live demo without an account
+            </Link>
+          </p>
         </main>
 
         <footer className="w-full max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between py-4 text-xs text-on-surface-variant border-t border-white/[0.06] gap-2">

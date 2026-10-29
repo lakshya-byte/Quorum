@@ -1,24 +1,25 @@
 # PatchLoop documentation
 
-PatchLoop is an AI agent that fixes bugs and proves the fix by running the
-test suite inside an isolated, ephemeral micro-VM. It doesn't suggest a
-patch — it isolates the failing code, synthesizes a fix, boots a sandbox,
-and only opens a pull request once the tests are actually green.
-
-This section documents everything built so far: the marketing site, the
-sign-in/sign-up UI, and the Go authentication backend behind them.
+PatchLoop fixes bugs with a team of AI agents and lets the tests decide. You
+pick a bug; a LangGraph agent team (triage, parallel proposers, critic,
+reviewer) running on Nemotron models via Nebius Token Factory proposes fixes in
+parallel, each tested in its own isolated Nebius Sandbox. NeMo Guardrails and a
+deterministic policy gate check the input, every patch and the output, and a
+security scan flags new findings. A solved run opens a GitHub pull request with
+the proof (diff + test output) and a Slack alert tells the on-call engineer,
+who reviews and merges it. Agents can never merge or push to main. Everything
+is also reachable from the [CLI](/docs/cli).
 
 ## Monorepo layout
 
-PatchLoop is two sibling repositories on disk:
-
 ```
-patchloop/            # this repo — Next.js frontend (marketing site + auth UI + these docs)
-patchloop-backend/    # Go + Gin + MongoDB auth API
+frontend/   # Next.js: landing page, /try demo, dashboard, run pages, docs  (port 3000)
+backend/    # Go + Gin + MongoDB: auth, runs, tokens, PRs, event relay     (port 8080)
+agent/      # Python + FastAPI + LangGraph: agents and sandboxes          (port 8001, internal)
 ```
 
-They're developed together but deployed independently — the frontend talks
-to the backend over HTTP with credentialed (cookie-based) requests.
+The browser and the CLI only talk to the backend; the backend is the only
+caller of the agent service.
 
 ## Tech stack
 
@@ -31,10 +32,15 @@ to the backend over HTTP with credentialed (cookie-based) requests.
 | Database | MongoDB |
 | Auth | JWT (access + refresh) in httpOnly cookies |
 | Transactional email | Resend (OTP email verification) |
+| Agents | Python, FastAPI, LangGraph |
+| Models | Nemotron via Nebius Token Factory |
+| Sandboxes | Nebius Sandboxes |
+| Guardrails | NeMo Guardrails + deterministic policy gate + security scan |
 
 ## Where to go next
 
-- **[Getting started](/docs/getting-started)** — run both the frontend and backend locally
+- **[Getting started](/docs/getting-started)** — run the three services (or the frontend with the mock) locally
+- **[CLI](/docs/cli)** — API tokens and `patchloop fix`
 - **[Frontend](/docs/frontend)** — routing conventions, design tokens, component inventory
 - **[Backend](/docs/backend)** — service architecture, data model, auth flow
 - **[API reference](/docs/api-reference)** — every endpoint, request/response shape, and error code

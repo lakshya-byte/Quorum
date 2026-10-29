@@ -16,7 +16,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "PatchLoop — bugs fixed, proven, before you see them",
   description:
-    "PatchLoop reads a failing test, reasons about the cause, writes a fix, and runs it in a sandbox until the test actually passes. Not a suggestion. A proof.",
+    "A team of AI agents proposes bug fixes in parallel, each tested in an isolated Nebius Sandbox. The tests decide, guardrails check every step, and a human merges the pull request.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
