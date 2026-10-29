@@ -127,24 +127,13 @@ export default function SignInCard() {
               </Link>
             </p>
 
-            <footer className="mt-6 pt-4 border-t border-white/[0.06] flex items-center justify-center text-xs text-on-surface-variant">
-              <div className="flex items-center gap-3">
-                <a href="#terms" className="hover:text-on-surface-variant transition">
-                  Terms
-                </a>
-                <span>•</span>
-                <a href="#privacy" className="hover:text-on-surface-variant transition">
-                  Privacy
-                </a>
-              </div>
-            </footer>
           </article>
         </div>
       </main>
 
       <footer className="relative z-20 py-4 px-6 border-t border-white/[0.04] bg-bg/60 backdrop-blur text-on-surface-variant text-[11px]">
         <div className="max-w-7xl mx-auto text-center">
-          <span>© 2026 PatchLoop, Inc.</span>
+          <span>© 2026 PatchLoop. Hackathon project.</span>
         </div>
       </footer>
     </div>

@@ -79,8 +79,12 @@ The API base URL comes from `NEXT_PUBLIC_API_URL` (default
 ## Frontend without the backend: the mock
 
 `frontend/mocks/server.mjs` is a dependency-free mock of the backend API: auth
-with cookies and Bearer tokens, bugs, runs, tokens, the guest demo, and
-scripted event streams with every event type (guards, triage, parallel nodes, a
+with cookies and Bearer tokens, bugs, runs, tokens, the guest demo, the GitHub
+App endpoints with a demo account (set `MOCK_GITHUB_APP=1` to simulate the
+install redirect), three demo repositories (`demo/inventory-api`,
+`demo/billing-utils`, `demo/text-tools`), tasks, repo runs with a fake pull
+request, checks and a fake merge, follow-ups, Slack settings and link codes,
+notifications, and scripted event streams with every event type (guards, triage, parallel nodes, a
 policy-blocked node, a security-flagged node, critic lessons, a winner, an
 unsolved run and a run blocked by the input guard). Any OTP code `123456` works.
 
@@ -99,7 +103,7 @@ NEXT_PUBLIC_API_URL=http://localhost:18090 npx next dev -p 13000
 
 Mock knobs: `MOCK_SPEED` (timing multiplier), `MOCK_DEMO_LIMIT` (guest runs per
 hour, default 3), `MOCK_ACCESS_TTL` (access cookie lifetime in seconds, to test
-refresh), `MOCK_DROP_ONCE=1` (cuts each stream once, to test reconnects).
+refresh), `MOCK_GITHUB_APP=1` (GitHub App install flow), `MOCK_DROP_ONCE=1` (cuts each stream once, to test reconnects).
 
 ## Next
 

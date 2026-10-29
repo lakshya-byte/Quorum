@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { Bug, Run } from "../../_lib/api";
+import { changedFileCount } from "../../_lib/unified";
 import { isRepoRun, totalTokens, type GuardStage, type RunState } from "../../_lib/runState";
 import { Badge, Card, ErrorNote, Icon, StatusChip, cx, type RunStatus } from "../../_ui";
 import AttemptTree from "./AttemptTree";
@@ -94,7 +95,7 @@ export default function RunView({ state, bug, run, solvedActions, onRetry, notic
   const selNode = selected != null ? state.nodes[selected] : undefined;
   const chip = runChip(state);
   const finished = state.status === "finished" || !!done;
-  const filesChanged = best?.files ? Object.keys(best.files).length : run?.filesChanged ?? null;
+  const filesChanged = run?.filesChanged ?? (best?.files ? changedFileCount(best) : null);
 
   return (
     <div className="flex flex-col gap-5">

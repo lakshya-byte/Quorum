@@ -273,10 +273,10 @@ function SlackCard() {
             {SLACK_EXAMPLES.map((x) => {
               const text = x.text.replace("{CODE}", code?.code ?? "CODE");
               return (
-                <li key={x.label} className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg px-3 py-2">
-                  <span className="w-28 shrink-0 text-[12px] text-on-surface-variant">{x.label}</span>
-                  <code className="min-w-0 flex-1 break-all font-mono text-[12.5px] text-on-surface">{text}</code>
-                  <CopyButton text={text} label="Copy" variant="ghost" />
+                <li key={x.label} className="flex flex-col gap-1.5 rounded-lg border border-border bg-bg px-3 py-2 sm:flex-row sm:items-center sm:gap-2">
+                  <span className="shrink-0 text-[12px] text-on-surface-variant sm:w-28">{x.label}</span>
+                  <code className="min-w-0 flex-1 break-words font-mono text-[12.5px] text-on-surface">{text}</code>
+                  <span className="self-start sm:self-auto"><CopyButton text={text} label="Copy" variant="ghost" /></span>
                 </li>
               );
             })}

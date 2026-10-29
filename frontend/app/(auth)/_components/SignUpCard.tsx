@@ -94,17 +94,6 @@ export default function SignUpCard() {
 
             <SignUpForm />
 
-            <p className="mt-5 text-center text-[11px] text-on-surface-variant/70 leading-relaxed">
-              By creating an account, you agree to our{" "}
-              <a href="#terms" className="underline hover:text-on-surface-variant transition">
-                Terms
-              </a>{" "}
-              and{" "}
-              <a href="#privacy" className="underline hover:text-on-surface-variant transition">
-                Privacy Policy
-              </a>
-              .
-            </p>
           </section>
 
           <p className="mt-6 text-center text-[12px] text-on-surface-variant">
@@ -116,15 +105,7 @@ export default function SignUpCard() {
         </main>
 
         <footer className="w-full max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between py-4 text-xs text-on-surface-variant border-t border-white/[0.06] gap-2">
-          <span>© 2026 PatchLoop, Inc.</span>
-          <div className="flex items-center gap-4">
-            <a href="#privacy" className="hover:text-on-surface-variant transition">
-              Privacy
-            </a>
-            <a href="#terms" className="hover:text-on-surface-variant transition">
-              Terms
-            </a>
-          </div>
+          <span>© 2026 PatchLoop. Hackathon project.</span>
         </footer>
       </div>
     </div>

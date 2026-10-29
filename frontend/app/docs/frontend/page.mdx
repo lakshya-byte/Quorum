@@ -1,121 +1,100 @@
 # Frontend
 
-Next.js 16, App Router, Turbopack. Tailwind CSS v4 with a token system
-defined in `app/globals.css`. GSAP drives scroll/entrance animation, Lenis
-drives smooth scrolling.
+Next.js 16 (App Router, Turbopack), React 19, Tailwind CSS v4. A small design
+system lives in `app/_ui/`, design tokens in `app/globals.css`. Everything runs
+without the real backend through `mocks/server.mjs`.
 
-## Routing: groups + private folders
-
-Routes are organized with **route groups** (parentheses — don't affect the
-URL) and **private folders** (underscore prefix — never routable), so it's
-always obvious what's a page and what's a colocated helper:
+## Layout of the code
 
 ```
 app/
-  layout.tsx, globals.css        # root layout, design tokens
-  _components/SmoothScroll.tsx   # shared across the whole app
-  _lib/lenis.ts                  # shared Lenis singleton
+  layout.tsx, globals.css          # root layout, tokens, focus + motion rules
+  _ui/                             # design system: Button, Card, Badge/StatusChip, Field (Input,
+                                   #   Textarea), Stepper, Tabs, Toast, EmptyState, Skeleton, Icon, Logo
+  _lib/                            # api.ts (typed API layer), auth.tsx, runState.ts (event reducer),
+                                   #   useRunStream.ts (SSE + reconnect), diff.ts, unified.ts (diff parser)
+  _components/
+    shell/                         # AppShell (sidebar, topbar, mobile drawer), NotificationsBell, CommandPalette
+    run/                           # RunView, Pipeline, AttemptTree, NodeCard, NodePanel, DiffViewer, PrCard
 
-  (marketing)/
-    page.tsx                     # → "/"
-    _components/                 # Header, Hero, Footer, etc. — marketing-only
+  (marketing)/                     # "/" landing page
+  (auth)/                          # /signin, /signup (+ 6-digit code step)
+  (app)/                           # AuthProvider + AppShell
+    dashboard/  new/  runs/[id]/  integrations/  settings/tokens/  try/
+  docs/                            # this documentation (MDX)
 
-  (auth)/
-    signin/page.tsx               # → "/signin"
-    signup/page.tsx               # → "/signup"
-    _components/                  # SignInCard, SignUpCard, AuthForms (wired to the API)
-
-  (app)/                          # AuthProvider + app header
-    try/                          # → "/try" (public demo)
-    dashboard/                    # → "/dashboard"
-    runs/[id]/                    # → "/runs/:id"
-    settings/tokens/              # → "/settings/tokens"
-
-  _components/run/                # RunView, AttemptTree, NodeCard, NodePanel (shared by /try and /runs/[id])
-  _lib/                           # api.ts, auth.tsx, runState.ts, useRunStream.ts, diff.ts
-
-mocks/server.mjs                  # dependency-free mock backend (npm run mock)
-
-  docs/
-    layout.tsx, page.mdx, .../    # → "/docs" and sub-pages (this section)
+mocks/server.mjs, mocks/repos.mjs  # dependency-free mock backend and demo repositories
+e2e/flow.cjs                       # Playwright walk through the whole product flow
 ```
 
-`(marketing)`, `(auth)` and `(app)` are route groups: they organize files without
-adding a URL segment. Anything prefixed `_` (`_components`, `_lib`) is
-guaranteed by Next.js to never become a route, which is what keeps
-component folders from ever colliding with real pages.
+## Design system
 
-## Design tokens
+- **One accent.** Emerald (`--primary`) for actions and success, cyan (`--secondary`) for
+  "in progress", amber (`--warning`) for caution, red (`--error`) for failures. Surfaces are a
+  layered dark scale (`--bg`, `--panel`, `--surface-container-*`) with 1px borders (`--border`,
+  `--border-strong`).
+- **Type.** Geist for UI, JetBrains Mono for code, ids and numbers. Sizes are set per component
+  from a short scale (12, 13, 14, 15, 18, 26–60 px).
+- **Icons** are inline SVG paths in `_ui/Icon.tsx`. Nothing is fetched at runtime.
+- **Accessibility.** A global `:focus-visible` ring, labelled form controls (`Field`), a skip link,
+  `aria-current` on navigation, roving-tabindex tabs, `role="alert"/"status"` for errors and toasts,
+  text colours chosen for AA contrast on the dark surfaces, and `prefers-reduced-motion` support
+  (all CSS animation is neutralised; the landing demo shows a static final frame).
+- **Responsive.** Everything works down to 375 px with no horizontal scroll (checked by the e2e script).
+  The sidebar becomes a drawer, tables become cards.
+- **Theme.** Dark only. There is no light theme yet.
 
-All color/typography tokens live in `app/globals.css` as CSS variables,
-mapped into Tailwind utilities via `@theme inline`:
+## Pages
 
-| Token | Value | Usage |
-| --- | --- | --- |
-| `--color-bg` | `#07090e` | page background |
-| `--color-primary` | `#10b981` | brand emerald — CTAs, accents |
-| `--color-secondary` | `#06b6d4` | cyan accent |
-| `--color-error` | `#f87171` | error states |
-| `--color-on-surface` | `#e1e2eb` | primary text |
-| `--color-on-surface-variant` | `#8f9cae` | secondary/muted text |
-| `--color-surface-container-*` | `#07090e` → `#262d3d` | layered dark surfaces, lowest → brightest |
-| `--font-sans` | Geist | body/UI font |
-| `--font-mono` | JetBrains Mono | code, labels, terminal-style UI |
-
-Icons are [Material Symbols Outlined](https://fonts.google.com/icons),
-loaded globally in `app/layout.tsx` and used via
-`<span className="material-symbols-outlined">icon_name</span>`.
-
-## Animation
-
-- **Lenis** (`app/_lib/lenis.ts`) — a module-scoped singleton set up once by
-  `<SmoothScroll />` in the root layout. Any component can call
-  `smoothScrollTo(target)` to trigger a smooth scroll.
-- **GSAP** (`@gsap/react`'s `useGSAP` + `ScrollTrigger`) — entrance timelines
-  and scroll-scrubbed effects, e.g. the hero's staggered fade-in and the
-  bento grid's stagger-on-scroll-into-view.
-
-## Page inventory
-
-### `/` — marketing landing page (`app/(marketing)/`)
-
-| Component | Renders |
+| Route | Purpose |
 | --- | --- |
-| `Header` | Fixed nav — logo, section links, Try it, Sign in / Get Started |
-| `Hero` | Headline, CLI-style pill, "Try the live demo" CTA (links to `/try`) |
-| `ProverDashboard` | Static illustration of a recorded run: agent team stages, event stream, winning diff |
-| `CredibilityStrip` | What the product guarantees: sandbox per attempt, tests decide, guardrails, human merges |
-| `ArchitectureBento` | How it works: Nebius Sandboxes, tests as judge, Nemotron via Nebius Token Factory, guardrails, human in the loop |
-| `ProofExplorer` | Before/after diff of the paginate demo bug with its test results |
-| `Quickstart` | CLI, HTTP API, local setup and mock commands with copy-to-clipboard |
-| `Footer` | Links |
+| `/` | Landing page: promise, scripted live demo (the real `AttemptTree` and `Pipeline` fed by scripted events), seven steps, system map and agent-team diagrams (inline SVG), the four entry points, trust, FAQ |
+| `/signin`, `/signup` | Email and password, then a 6-digit code |
+| `/dashboard` | Onboarding checklist (GitHub, first run, Slack), stats, run history with source, status, tests, cost, speed, safety, PR and trace id |
+| `/new` | Three steps: repository + branch picker with search, the problem in plain English (examples included), review and start |
+| `/runs/[id]` | Live run: pipeline repo → locate → repro → propose → test → critic → review → PR, attempt tree, multi-file diff viewer, PR card with checks, **Merge** and **Ask for changes**, Slack indicator |
+| `/integrations` | GitHub App status (install, manage on GitHub, disconnect, demo account), Slack (webhook + test, link code + copyable commands), GitHub-issue and CLI triggers. Slack and GitHub triggers are marked as needing app setup |
+| `/settings/tokens` | API tokens for the CLI |
+| `/try` | Public guest demo |
 
-### `/signin`, `/signup` — auth pages (`app/(auth)/`)
+Press <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>K</kbd> in the app for the command palette (pages, repositories, recent runs).
 
-Email + password sign-in and sign-up, wired to `/api/auth/*`. Sign-up and an
-unverified sign-in continue to a 6-digit code screen (`verify-otp`, with a
-resend button). Backend error messages are shown as-is. All calls use
-`credentials: "include"`; a `401` triggers one `POST /api/auth/refresh` and a
-retry. `?next=/path` returns to the protected page that redirected you.
+### How a repo run renders
 
-### `/try`, `/dashboard`, `/runs/[id]`, `/settings/tokens` (`app/(app)/`)
+`useRunStream` opens an `EventSource` (with credentials, reconnect with backoff) and feeds every
+message to the pure reducer in `_lib/runState.ts`. Besides the older `guard`, `triage`, `round`,
+`node`, `critic`, `done` and `error` events it understands `repo`, `locate`, `repro`, `pr`
+(including `updated: true` for follow-ups) and an optional `slack` event. Unknown events are
+ignored. `pipelineStages(state)` turns the state into the eight stage chips. A finished run is
+rendered from `GET /api/runs/:id` without streaming.
 
-- `/try` is public: it lists `/api/demo/bugs`, starts a guest run and streams
-  `/api/demo/runs/:id/events`. It shows the 429 message when the guest limit is hit.
-- `/dashboard`, `/runs/*` and `/settings/*` are protected client-side: the
-  `RequireAuth` guard calls `/api/auth/me` and redirects to `/signin` without a session.
-- `/runs/[id]` streams with `EventSource` (`withCredentials`), reconnects with
-  exponential backoff, and renders an already finished run from `GET /api/runs/:id`
-  without streaming.
-- The run state is a pure, idempotent reducer (`_lib/runState.ts`): node objects
-  keep their identity, so memoised `NodeCard`s only re-render when their own data
-  changes, and a reconnect that replays old events changes nothing.
-- The side panel diffs each attempt against node 0 with a small LCS line diff
-  (`_lib/diff.ts`).
+Nodes may carry `files` (path → content) and `diff` (unified diff). `DiffViewer` parses the diff
+per file (`_lib/unified.ts`); older single-file runs fall back to the LCS line diff in `_lib/diff.ts`.
 
-### `/docs` — this documentation (`app/docs/`)
+### Merge is a human action
 
-Built with [`@next/mdx`](https://nextjs.org/docs/app/guides/mdx): each page
-below is a `.mdx` file that is both the readable source and the literal
-file Next.js renders. Shared styling for markdown elements (headings, code
-blocks, tables) lives in `mdx-components.tsx` at the project root.
+The PR card calls `GET /api/runs/:id/pr` for state and checks, and `POST /api/runs/:id/merge` only
+after you press **Merge pull request** and confirm. The button is disabled with the server's reason
+unless `mergeAllowed`. With no CI configured, a warning is shown. **Ask for changes** posts to
+`POST /api/runs/:id/followup`, which pushes one new commit to the same branch.
+
+## Mock backend
+
+`npm run mock` starts `mocks/server.mjs` on :8080 (see [Getting started](/docs/getting-started)).
+It implements auth, demo bugs, runs and SSE, the GitHub App endpoints (demo account; set
+`MOCK_GITHUB_APP=1` to simulate the install redirect), three demo repositories
+(`demo/inventory-api`, `demo/billing-utils`, `demo/text-tools`), tasks, repo run streams with every
+event type and a fake PR, PR status with checks, a fake merge, follow-ups, Slack settings and link
+codes, notifications and API tokens. It uses the same cookie contract as the Go backend.
+
+## End-to-end script
+
+```bash
+cd frontend
+npm run build && npx next start -p 3000      # terminal 1
+node e2e/flow.cjs [screenshot-dir]            # terminal 2: starts the mock, drives Chromium
+```
+
+The script signs up, connects GitHub (App install, then demo), saves a Slack webhook, runs a fix
+through `/new`, watches it live, asks for changes, merges, runs a repo without CI, and then repeats
+key pages at 375 px, failing on any page error or horizontal overflow.

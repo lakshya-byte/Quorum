@@ -140,11 +140,6 @@ function DashboardInner() {
       <PageHeader
         title="Dashboard"
         description={`${user?.companyName ? user.companyName + ". " : ""}Agents propose, your tests decide, you merge.`}
-        actions={
-          <LinkButton href="/new" icon="plus">
-            Fix a bug
-          </LinkButton>
-        }
       />
 
       <Checklist gh={gh} slack={slack} runs={runs} />

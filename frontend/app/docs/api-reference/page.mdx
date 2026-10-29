@@ -180,6 +180,57 @@ Opens a GitHub pull request with the winning fix and its test output and
 returns `{ url }`; `400` when the run is not solved. Agents never merge or
 push to main: a human reviews and merges the pull request.
 
+## GitHub (GitHub App)
+
+| Method | Path | Result |
+| --- | --- | --- |
+| `GET` | `/api/github/status` | `{ connected, mode: "app" or "demo" or null, login, avatarUrl, installationId, appConfigured, repoCount }` |
+| `GET` | `/api/github/connect` | `{ url }`, the GitHub App install URL; `503` when the app is not configured |
+| `POST` | `/api/github/demo` | connects the offline demo account (bundled demo repositories, simulated PRs and merges) |
+| `DELETE` | `/api/github` | disconnects |
+| `GET` | `/api/github/repos?q=` | `[{ fullName, private, defaultBranch, description, language, updatedAt }]` for the repositories granted to the app |
+| `GET` | `/api/github/repos/:owner/:repo/branches` | `[{ name, default }]` |
+
+## Tasks and repo runs
+
+`POST /api/tasks` with `{ repo, branch, task, autoPr }` returns `{ runId }`
+(`409` when GitHub is not connected, `429` after 10 tasks per hour). The run
+is then read like any other run (`GET /api/runs/:id`, `/events`). Run objects
+carry `kind` (`bug` or `repo`), `repo`, `branch`, `task`, `source`, `prNumber`,
+`prBranch`, `filesChanged`, `merged`, `cost`, `safety`, `traceId`.
+
+Repo runs add these events before `guard`, `triage`, `round`, `node`, `critic`
+and `done`:
+
+| `type` | `data` |
+| --- | --- |
+| `repo` | `{ full_name, branch, files, language, test_command, truncated }` |
+| `locate` | `{ files: [{ path, reason }] }` |
+| `repro` | `{ path, test_name, failed_on_original, output_tail }` |
+| `pr` | `{ url, branch, number, fake, updated? }`, after `done` |
+
+`node` events may also carry `files` (path to content) and `diff` (unified diff).
+
+## Pull request, merge and follow-up
+
+| Method | Path | Result |
+| --- | --- | --- |
+| `GET` | `/api/runs/:id/pr` | `{ url, number, state, mergeable, checks: { state, failing }, mergeAllowed, reason }` |
+| `POST` | `/api/runs/:id/merge` | body `{ method? }`. Merges as the signed-in user; `409 { error }` unless the PR is open, mergeable and checks passed (no CI is allowed with a `warning`). Only a human action. |
+| `POST` | `/api/runs/:id/followup` | body `{ message }`, returns `{ runId }`; pushes one new commit to the same branch |
+
+## Slack and notifications
+
+| Method | Path | Result |
+| --- | --- | --- |
+| `GET` / `PUT` / `DELETE` | `/api/settings/slack` | `{ configured, webhookUrlMasked }`; `PUT` body `{ webhookUrl }` must start with `https://hooks.slack.com/` |
+| `POST` | `/api/settings/slack/test` | sends a test message |
+| `POST` | `/api/slack/link-code` | `{ code, expiresAt }`, for `/patchloop link CODE` in Slack |
+| `GET` | `/api/notifications` | list; `POST /api/notifications/:id/read` marks one read |
+
+Slack commands and GitHub issue triggers need the Slack app and the GitHub App
+to be set up by the operator of the server.
+
 ## API tokens
 
 | Method | Path | Result |

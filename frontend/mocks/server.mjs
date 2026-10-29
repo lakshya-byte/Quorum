@@ -443,8 +443,14 @@ function prStatus(run) {
   let reason = "";
   let allowed = open;
   if (!open) reason = "Already merged.";
-  else if (checks.state === "pending") (allowed = false), (reason = "Checks are still running. Merge unlocks when they pass.");
-  else if (checks.state === "failure") (allowed = false), (reason = "A required check is failing.");
+  else if (checks.state === "pending") {
+    allowed = false;
+    reason = "Checks are still running. Merge unlocks when they pass.";
+  }
+  else if (checks.state === "failure") {
+    allowed = false;
+    reason = "A required check is failing.";
+  }
   return {
     url: pr.url,
     number: pr.number,

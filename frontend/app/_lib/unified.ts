@@ -59,3 +59,12 @@ export function diffFileFromLines(path: string, lines: DiffLine[]): DiffFile {
   const s = diffStats(lines);
   return { path, rows: lines.map((l) => ({ kind: l.kind, text: l.text, a: l.a, b: l.b })), add: s.add, del: s.del };
 }
+
+/** Number of files a candidate actually changes (from its diff), falling back to the files map. */
+export function changedFileCount(n: { diff?: string; files?: Record<string, string> }): number {
+  if (n.diff) {
+    const c = parseUnifiedDiff(n.diff).length;
+    if (c) return c;
+  }
+  return n.files ? Object.keys(n.files).length : 0;
+}

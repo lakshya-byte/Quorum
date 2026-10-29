@@ -12,7 +12,10 @@ export function unifiedDiff(path, before, after, ctx = 3) {
   let i = 0;
   let j = 0;
   while (i < n && j < m) {
-    if (A[i] === B[j]) ops.push([" ", A[i++]]), j++;
+    if (A[i] === B[j]) {
+      ops.push([" ", A[i++]]);
+      j++;
+    }
     else if (lcs[i + 1][j] >= lcs[i][j + 1]) ops.push(["-", A[i++]]);
     else ops.push(["+", B[j++]]);
   }

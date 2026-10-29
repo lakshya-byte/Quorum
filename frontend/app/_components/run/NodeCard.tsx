@@ -4,6 +4,7 @@ import { memo } from "react";
 import type { RunNode } from "../../_lib/api";
 import { nodeTokens, nodeTone } from "../../_lib/runState";
 import { Icon } from "../../_ui";
+import { changedFileCount } from "../../_lib/unified";
 
 const TONE = {
   green: {
@@ -122,10 +123,10 @@ function NodeCardImpl({ node, isBest, isSelected, lessons, onSelect }: Props) {
           {tokens > 0 && <span>{tokens.toLocaleString()} tok</span>}
         </div>
 
-        {node.files && Object.keys(node.files).length > 1 && (
+        {node.files && node.parent != null && changedFileCount(node) > 1 && (
           <div className="mt-2 inline-flex items-center gap-1 rounded bg-surface-container-high px-1.5 py-0.5 font-mono text-[10.5px] text-on-surface-variant">
             <Icon name="file" size={12} />
-            {Object.keys(node.files).length} files
+            {changedFileCount(node)} files changed
           </div>
         )}
 

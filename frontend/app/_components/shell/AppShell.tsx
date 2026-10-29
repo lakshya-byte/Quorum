@@ -6,6 +6,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "../../_lib/auth";
 import { Icon, LinkButton, Logo, cx, type IconName } from "../../_ui";
 import NotificationsBell from "./NotificationsBell";
+import CommandPalette from "./CommandPalette";
 
 type NavItem = { href: string; label: string; icon: IconName; match?: (p: string) => boolean };
 
@@ -142,6 +143,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </div>
       )}
 
+      <CommandPalette />
       <div className="flex min-w-0 flex-col">
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-border bg-bg/85 px-4 backdrop-blur-xl lg:px-8">
           <div className="flex items-center gap-2">
@@ -158,6 +160,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event("patchloop:palette"))}
+              className="focus-ring hidden h-8 items-center gap-2 rounded-md border border-border-strong px-2.5 text-[13px] text-on-surface-variant hover:text-white sm:flex"
+              aria-label="Open command palette"
+            >
+              <Icon name="search" size={14} />
+              Search
+              <kbd className="rounded border border-border-strong px-1 font-mono text-[11px] text-text-subtle">Ctrl K</kbd>
+            </button>
             <LinkButton href="/new" size="sm" icon="plus">
               <span className="hidden sm:inline">Fix a bug</span>
               <span className="sm:hidden">New</span>
