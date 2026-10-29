@@ -36,12 +36,10 @@ func setSSEHeaders(h http.Header) {
 }
 
 func sseEvent(typ string, data any) []byte {
-	var b []byte
-	if data == nil {
-		b, _ = json.Marshal(map[string]any{"type": typ})
-	} else {
-		b, _ = json.Marshal(map[string]any{"type": typ, "data": data})
-	}
+	b, _ := json.Marshal(struct {
+		Type string `json:"type"`
+		Data any    `json:"data,omitempty"`
+	}{typ, data})
 	return []byte("data: " + string(b) + "\n\n")
 }
 
