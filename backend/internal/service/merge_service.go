@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ type PRInfo struct {
 	Warning      string         `json:"warning,omitempty"`
 	Fake         bool           `json:"fake,omitempty"`
 	Merged       *models.Merged `json:"merged,omitempty"`
+	headSHA      string         // sha the checks were evaluated for; Merge pins to it
 }
 
 // MergeResult is the answer of a successful merge.
@@ -116,7 +118,7 @@ func (m *MergeService) Info(ctx context.Context, run *models.Run) (*PRInfo, erro
 	if err != nil {
 		return nil, err
 	}
-	info := &PRInfo{URL: run.PRURL, Number: run.PRNumber, State: pr.State, Mergeable: pr.Mergeable}
+	info := &PRInfo{URL: run.PRURL, Number: run.PRNumber, State: pr.State, Mergeable: pr.Mergeable, headSHA: pr.HeadSHA}
 	if pr.Merged {
 		info.State = "merged"
 	}
@@ -167,19 +169,18 @@ func (m *MergeService) Merge(ctx context.Context, run *models.Run, userID, metho
 			}
 			return nil, err
 		}
-		// Re-read the head sha so we never merge something newer than what we checked.
-		auth, err := m.github.AgentToken(ctx, run.UserID)
-		if err != nil {
-			return nil, err
+		// Pin to the head sha the gate evaluated: if the branch moved since, GitHub refuses (409).
+		if info.headSHA == "" {
+			return nil, &MergeRefusedError{Reason: "could not determine the pull request head commit"}
 		}
-		pr, err := m.github.API().GetPull(ctx, auth.Token, run.Repo, run.PRNumber)
-		if err != nil {
-			return nil, err
-		}
-		if err := m.github.API().MergePull(ctx, userToken, run.Repo, run.PRNumber, method, pr.HeadSHA); err != nil {
+		if err := m.github.API().MergePull(ctx, userToken, run.Repo, run.PRNumber, method, info.headSHA); err != nil {
 			var ge *GitHubAPIError
 			if errors.As(err, &ge) && (ge.Status == 403 || ge.Status == 404 || ge.Status == 405 || ge.Status == 409 || ge.Status == 422) {
-				return nil, &MergeRefusedError{Reason: fmt.Sprintf("GitHub refused the merge: %s", ge.Message)}
+				reason := fmt.Sprintf("GitHub refused the merge: %s", ge.Message)
+				if ge.Status == 409 || ge.Status == 422 {
+					reason += " (the pull request may have changed since the checks were read; refresh and try again)"
+				}
+				return nil, &MergeRefusedError{Reason: reason}
 			}
 			return nil, err
 		}
@@ -190,8 +191,9 @@ func (m *MergeService) Merge(ctx context.Context, run *models.Run, userID, metho
 	}
 	// The PR is one object: its other runs (the original and every follow-up) show it as merged too.
 	if run.PRNumber > 0 {
+		// The merge already happened on GitHub: a bookkeeping failure must not turn it into an error.
 		if err := m.runs.SetMergedForPR(ctx, run.UserID, run.Repo, run.PRBranch, run.PRNumber, by, at); err != nil {
-			return nil, err
+			slog.Warn("could not mark the PR's other runs merged", "run", run.ID.Hex(), "error", err.Error())
 		}
 	}
 	run.Merged = &models.Merged{By: by, At: at}

@@ -694,7 +694,7 @@ func countFiles(v any) int {
 // bestTests returns passed/total of the best node (the winner, else the node
 // passing the largest share of tests), so run lists need not load all nodes.
 func bestTests(nodes []any, best any) (int, int) {
-	pass, total, ratio, found := 0, 0, -1.0, false
+	pass, total, ratio := 0, 0, -1.0
 	for _, n := range nodes {
 		m, ok := n.(map[string]any)
 		if !ok {
@@ -708,7 +708,7 @@ func bestTests(nodes []any, best any) (int, int) {
 		if best != nil && fmt.Sprint(m["id"]) == fmt.Sprint(best) {
 			return p, t
 		}
-		if r := float64(p) / float64(t); !found && r > ratio {
+		if r := float64(p) / float64(t); r > ratio {
 			pass, total, ratio = p, t, r
 		}
 	}

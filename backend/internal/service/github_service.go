@@ -154,7 +154,7 @@ func (s *GitHubService) HandleCallback(ctx context.Context, installationID int64
 		}
 		conn = &models.GitHubConnection{UserID: userID}
 	}
-	if installationID == 0 {
+	if installationID == 0 && conn.Mode == models.GitHubModeApp { // never reuse a demo account's fake id
 		installationID = conn.InstallationID
 	}
 	if installationID == 0 {
