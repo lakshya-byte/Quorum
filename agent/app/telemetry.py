@@ -70,7 +70,7 @@ def setup_logging(level: str = "INFO") -> None:
     handler.setFormatter(JsonFormatter())
     root.handlers = [handler]
     root.setLevel(os.environ.get("LOG_LEVEL", level).upper())
-    for noisy in ("httpx", "httpcore", "nemoguardrails", "langsmith"):
+    for noisy in ("httpx", "httpx2", "httpcore", "nemoguardrails", "langsmith"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 

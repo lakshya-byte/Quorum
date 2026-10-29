@@ -6,19 +6,24 @@ from typing import Any
 
 import httpx
 
+from app.telemetry import traceparent_for
+
 log = logging.getLogger(__name__)
 
 CALLBACK_TIMEOUT = 5.0
 
 
-async def post_completion(base_url: str, secret: str, payload: dict[str, Any]) -> bool:
+async def post_completion(base_url: str, secret: str, payload: dict[str, Any], trace_id: str = "") -> bool:
     """POST the final payload. Failures are logged and swallowed; returns success."""
     if not base_url:
         return False
     url = f"{base_url}/internal/runs/{payload['run_id']}/complete"
+    headers = {"X-Agent-Secret": secret}
+    if trace_id:
+        headers["traceparent"] = traceparent_for(trace_id)
     try:
         async with httpx.AsyncClient(timeout=CALLBACK_TIMEOUT) as client:
-            resp = await client.post(url, json=payload, headers={"X-Agent-Secret": secret})
+            resp = await client.post(url, json=payload, headers=headers)
         resp.raise_for_status()
         return True
     except Exception as exc:

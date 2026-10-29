@@ -110,6 +110,8 @@ async def evaluate_candidate(
         # The harness always writes the ORIGINAL tests: only the target comes from the candidate.
         _, output, after = await cached_check(sandbox, bug, code, timeout)
         passed, total = parse_unittest(output)
+        if skip_policy and code == bug["buggy"]:  # node 0's scan is the security baseline
+            _baselines.setdefault((type(sandbox).__name__, bug["id"]), after)
         if not skip_policy:
             before = await baseline_findings(sandbox, bug)
             verdict = security_verdict(before, after)

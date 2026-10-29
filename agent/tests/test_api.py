@@ -30,7 +30,8 @@ def read_sse(client: TestClient, run_id: str) -> list[dict]:
 
 
 def test_health_needs_no_secret(client: TestClient) -> None:
-    assert client.get("/health").json() == {"status": "ok", "mode": "fake"}
+    body = client.get("/health").json()
+    assert {"status": "ok", "mode": "fake"}.items() <= body.items()  # fields may only be added
 
 
 def test_routes_require_secret(client: TestClient) -> None:
@@ -41,7 +42,10 @@ def test_routes_require_secret(client: TestClient) -> None:
 
 def test_list_bugs(client: TestClient) -> None:
     bugs = client.get("/bugs", headers=HEADERS).json()
-    assert {b["id"] for b in bugs} == {"paginate", "slugify", "cart", "average"}
+    easy = {b["id"] for b in bugs if b["tier"] == "easy"}
+    assert easy == {"paginate", "slugify", "cart", "average"}
+    assert {b["id"] for b in bugs if b["tier"] == "hard"} == {
+        "money_total", "version_sort", "merge_intervals", "lru_cache", "slugify_unicode"}
 
 
 def test_fake_run_streams_nodes_and_ends(client: TestClient, tmp_path: Path) -> None:
@@ -53,8 +57,9 @@ def test_fake_run_streams_nodes_and_ends(client: TestClient, tmp_path: Path) -> 
     events = read_sse(client, body["run_id"])
     types = [e["type"] for e in events]
     assert "node" in types
-    assert types[-2] == "done" and events[-2]["data"]["solved"] is True
-    assert types[-1] == "end"
+    done = next(e for e in events if e["type"] == "done")
+    assert done["data"]["solved"] is True
+    assert types[0] == "run_started" and types[-1] == "end"
 
     run = client.get(f"/runs/{body['run_id']}", headers=HEADERS).json()
     assert run["status"] == "done"
@@ -90,4 +95,4 @@ def test_replay_streams_a_saved_real_run(client: TestClient, tmp_path: Path) -> 
     body = client.post("/runs", json={"bug_id": "cart", "replay": True}, headers=HEADERS).json()
     assert body["mode"] == "replay" and body["replay_of"] == "abc123"
     types = [e["type"] for e in read_sse(client, body["run_id"])]
-    assert types == ["node", "round", "node", "done", "end"]
+    assert types == ["run_started", "node", "round", "node", "done", "end"]
