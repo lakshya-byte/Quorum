@@ -176,15 +176,73 @@ func (a *AgentClient) CreateRun(ctx context.Context, req AgentCreateRunRequest) 
 	return &out, nil
 }
 
-func (a *AgentClient) OpenPR(ctx context.Context, agentRunID string) (string, error) {
-	var out struct {
-		URL string `json:"url"`
+// AgentRepoRef names the repo and branch of a repo run.
+type AgentRepoRef struct {
+	FullName string `json:"full_name"`
+	Branch   string `json:"branch"`
+}
+
+// AgentFollowup asks the agent to push one more commit to an existing PR branch.
+type AgentFollowup struct {
+	PRBranch      string            `json:"pr_branch"`
+	PRNumber      int               `json:"pr_number"`
+	Message       string            `json:"message"`
+	PreviousFiles map[string]string `json:"previous_files,omitempty"`
+}
+
+// AgentRepoRunRequest is POST /repo-runs. GitHubToken is the per-run
+// installation token: it must never be logged or stored.
+type AgentRepoRunRequest struct {
+	Task        string         `json:"task"`
+	Repo        AgentRepoRef   `json:"repo"`
+	GitHubToken *string        `json:"github_token"`
+	UserID      string         `json:"user_id,omitempty"`
+	Engine      string         `json:"engine,omitempty"`
+	AutoPR      bool           `json:"auto_pr"`
+	RunURL      string         `json:"run_url,omitempty"`
+	Source      string         `json:"source,omitempty"`
+	IssueRef    *int           `json:"issue_ref,omitempty"`
+	Followup    *AgentFollowup `json:"followup,omitempty"`
+}
+
+type AgentRepoRunResponse struct {
+	RunID   string `json:"run_id"`
+	Mode    string `json:"mode"`
+	Engine  string `json:"engine"`
+	TraceID string `json:"trace_id"`
+}
+
+func (a *AgentClient) CreateRepoRun(ctx context.Context, req AgentRepoRunRequest) (*AgentRepoRunResponse, error) {
+	var out AgentRepoRunResponse
+	if err := a.do(ctx, http.MethodPost, "/repo-runs", req, &out, 30*time.Second); err != nil {
+		return nil, err
+	}
+	if out.RunID == "" {
+		return nil, fmt.Errorf("%w: missing run_id", ErrAgentUnavailable)
+	}
+	return &out, nil
+}
+
+// AgentPR is what the agent reports after opening a pull request.
+type AgentPR struct {
+	URL    string `json:"url"`
+	Number int    `json:"number"`
+	Branch string `json:"branch"`
+}
+
+// OpenPR asks the agent to open the PR for a solved run. token is only sent
+// for repo runs (the bundled bug runs pass "").
+func (a *AgentClient) OpenPR(ctx context.Context, agentRunID, token string) (AgentPR, error) {
+	var out AgentPR
+	var body any
+	if token != "" {
+		body = map[string]string{"github_token": token}
 	}
 	// Opening a PR talks to GitHub; allow more time.
-	if err := a.do(ctx, http.MethodPost, "/runs/"+url.PathEscape(agentRunID)+"/pr", nil, &out, 90*time.Second); err != nil {
-		return "", err
+	if err := a.do(ctx, http.MethodPost, "/runs/"+url.PathEscape(agentRunID)+"/pr", body, &out, 90*time.Second); err != nil {
+		return AgentPR{}, err
 	}
-	return out.URL, nil
+	return out, nil
 }
 
 // EventsURL is the agent SSE endpoint for a run.

@@ -18,6 +18,9 @@ type RouterConfig struct {
 
 	// Optional pieces (nil = routes not registered); keeps old tests simple.
 	Runs      *RunHandler
+	GitHub    *GitHubHandler
+	Settings  *SettingsHandler
+	Webhooks  *WebhookHandler
 	Tokens    *TokenHandler
 	TokenAuth middleware.TokenAuthenticator
 	DevMailer *service.Mailer // non-nil only when DEV_MODE=true
@@ -64,6 +67,10 @@ func NewRouter(authHandler *AuthHandler, cfg RouterConfig) *gin.Engine {
 		authed.GET("/runs/:id", cfg.Runs.Get)
 		authed.GET("/runs/:id/events", cfg.Runs.Events)
 		authed.POST("/runs/:id/pr", cfg.Runs.OpenPR)
+		authed.GET("/runs/:id/pr", cfg.Runs.GetPR)
+		authed.POST("/runs/:id/merge", cfg.Runs.Merge)
+		authed.POST("/runs/:id/followup", cfg.Runs.Followup)
+		authed.POST("/tasks", cfg.Runs.CreateTask)
 
 		demo := r.Group("/api/demo")
 		demo.GET("/bugs", cfg.Runs.Bugs)
@@ -75,6 +82,36 @@ func NewRouter(authHandler *AuthHandler, cfg RouterConfig) *gin.Engine {
 		if cfg.DevMailer != nil {
 			internal.GET("/dev/otp", DevOTP(cfg.DevMailer))
 		}
+	}
+
+	if cfg.GitHub != nil {
+		gh := r.Group("/api/github")
+		gh.GET("/callback", cfg.GitHub.Callback) // public: protected by the signed state
+		authedGH := gh.Group("", requireAuth)
+		authedGH.GET("/status", cfg.GitHub.Status)
+		authedGH.GET("/connect", cfg.GitHub.Connect)
+		authedGH.POST("/demo", cfg.GitHub.Demo)
+		authedGH.DELETE("", cfg.GitHub.Disconnect)
+		authedGH.GET("/repos", cfg.GitHub.Repos)
+		authedGH.GET("/repos/:owner/:repo/branches", cfg.GitHub.Branches)
+	}
+
+	if cfg.Settings != nil {
+		api2 := r.Group("/api", requireAuth)
+		api2.GET("/settings/slack", cfg.Settings.GetSlack)
+		api2.PUT("/settings/slack", cfg.Settings.PutSlack)
+		api2.DELETE("/settings/slack", cfg.Settings.DeleteSlack)
+		api2.POST("/settings/slack/test", cfg.Settings.TestSlack)
+		api2.POST("/slack/link-code", cfg.Settings.LinkCode)
+		api2.GET("/notifications", cfg.Settings.Notifications)
+		api2.POST("/notifications/:id/read", cfg.Settings.MarkRead)
+	}
+
+	if cfg.Webhooks != nil {
+		r.POST("/api/github/webhook", cfg.Webhooks.GitHub)
+		r.POST("/slack/commands", cfg.Webhooks.SlackCommand)
+		r.POST("/slack/events", cfg.Webhooks.SlackEvents)
+		r.POST("/slack/interactions", cfg.Webhooks.SlackInteractions)
 	}
 
 	if cfg.Tokens != nil {

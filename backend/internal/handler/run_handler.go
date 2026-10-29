@@ -20,11 +20,15 @@ type RunHandler struct {
 	runs       *service.RunService
 	relay      *SSERelay
 	guestLimit *ratelimit.Limiter
+	taskLimit  *ratelimit.Limiter
+	merge      *service.MergeService
 	ipSalt     string
 }
 
 type RunHandlerConfig struct {
 	GuestLimiter *ratelimit.Limiter
+	TaskLimiter  *ratelimit.Limiter // per-user repo tasks (nil = unlimited)
+	Merge        *service.MergeService
 	IPHashSalt   string
 }
 
@@ -33,6 +37,8 @@ func NewRunHandler(runs *service.RunService, cfg RunHandlerConfig) *RunHandler {
 		runs:       runs,
 		relay:      &SSERelay{Transport: runs.Agent().Transport, Secret: runs.Agent().Secret},
 		guestLimit: cfg.GuestLimiter,
+		taskLimit:  cfg.TaskLimiter,
+		merge:      cfg.Merge,
 		ipSalt:     cfg.IPHashSalt,
 	}
 }
@@ -43,30 +49,19 @@ func agentErrorResponse(c *gin.Context, err error) {
 	case errors.As(err, &ae):
 		status := ae.Status
 		if status == http.StatusUnauthorized || status == http.StatusForbidden {
-			status = http.StatusBadGateway // our secret is wrong; not the user's fault
-			c.JSON(status, gin.H{"error": "agent rejected the backend credentials"})
+			// our secret is wrong; not the user's fault
+			apiError(c, http.StatusBadGateway, "agent_rejected", "agent rejected the backend credentials")
 			return
 		}
-		c.JSON(status, gin.H{"error": ae.Message})
+		apiError(c, status, "agent_error", ae.Message)
 	case errors.Is(err, service.ErrAgentUnavailable):
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent unavailable, please retry"})
+		apiError(c, http.StatusBadGateway, "agent_unavailable", "agent unavailable, please retry")
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		apiError(c, http.StatusInternalServerError, "internal", "internal error")
 	}
 }
 
-func runError(c *gin.Context, err error) {
-	switch {
-	case errors.Is(err, service.ErrInvalidBugID), errors.Is(err, service.ErrInvalidEngine):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-	case errors.Is(err, service.ErrRunNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
-	case errors.Is(err, service.ErrRunNotReady):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-	default:
-		agentErrorResponse(c, err)
-	}
-}
+func runError(c *gin.Context, err error) { serviceError(c, err) }
 
 func toBugs(bugs []service.AgentBug) []dto.BugResponse {
 	out := make([]dto.BugResponse, 0, len(bugs))
@@ -164,7 +159,7 @@ func (h *RunHandler) OpenPR(c *gin.Context) {
 		runError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"url": url})
+	c.JSON(http.StatusOK, gin.H{"url": url, "number": run.PRNumber, "branch": run.PRBranch})
 }
 
 func (h *RunHandler) ipHash(c *gin.Context) string {

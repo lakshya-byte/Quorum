@@ -53,6 +53,17 @@ func EnsureIndexes(ctx context.Context, database *mongo.Database) error {
 		{"runs", mongo.IndexModel{Keys: bson.D{{Key: "agent_run_id", Value: 1}}}},
 		{"apiTokens", mongo.IndexModel{Keys: bson.D{{Key: "token_hash", Value: 1}}, Options: options.Index().SetUnique(true)}},
 		{"apiTokens", mongo.IndexModel{Keys: bson.D{{Key: "user_id", Value: 1}}}},
+		{"runs", mongo.IndexModel{Keys: bson.D{{Key: "slack.channel", Value: 1}, {Key: "slack.thread_ts", Value: 1}}}},
+		{"runs", mongo.IndexModel{Keys: bson.D{{Key: "repo", Value: 1}, {Key: "pr_number", Value: 1}}}},
+		{"runs", mongo.IndexModel{Keys: bson.D{{Key: "parent_run_id", Value: 1}}}},
+		{"github_connections", mongo.IndexModel{Keys: bson.D{{Key: "user_id", Value: 1}}, Options: options.Index().SetUnique(true)}},
+		{"github_connections", mongo.IndexModel{Keys: bson.D{{Key: "installation_id", Value: 1}}}},
+		{"slack_settings", mongo.IndexModel{Keys: bson.D{{Key: "user_id", Value: 1}}, Options: options.Index().SetUnique(true)}},
+		{"slack_links", mongo.IndexModel{Keys: bson.D{{Key: "slack_user_id", Value: 1}}, Options: options.Index().SetUnique(true)}},
+		{"slack_link_codes", mongo.IndexModel{Keys: bson.D{{Key: "expires_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)}},
+		{"slack_link_codes", mongo.IndexModel{Keys: bson.D{{Key: "code", Value: 1}}, Options: options.Index().SetUnique(true)}},
+		{"notifications", mongo.IndexModel{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "created_at", Value: -1}}}},
+		{"webhook_dedupe", mongo.IndexModel{Keys: bson.D{{Key: "created_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(86400)}},
 	}
 	for _, i := range indexes {
 		if _, err := database.Collection(i.col).Indexes().CreateOne(ctx, i.model); err != nil {
