@@ -211,15 +211,18 @@ function DashboardInner() {
                       <td className="px-4 py-3 font-mono text-[12.5px] text-on-surface-variant" title="Tokens used">{tokens(r)} tok</td>
                       <td className="px-4 py-3 font-mono text-[12.5px] text-on-surface-variant">{fmtMs(r.latencyMs)}</td>
                       <td className="px-4 py-3">
-                        {safetySummary(r.safety) ? (
-                          <span title={`policy ${safetySummary(r.safety)!.policy}, security ${safetySummary(r.safety)!.security}, guard ${safetySummary(r.safety)!.guard}`}>
-                            <Badge tone={safetySummary(r.safety)!.allPass ? "success" : "warning"} icon="shield-check">
-                              {safetySummary(r.safety)!.allPass ? "all pass" : "flagged"}
-                            </Badge>
-                          </span>
-                        ) : (
-                          <span className="text-text-subtle">–</span>
-                        )}
+                        {(() => {
+                          const sf = safetySummary(r.safety);
+                          if (!sf) return <span className="text-text-subtle">–</span>;
+                          const label = sf.anyFail ? "flagged" : sf.allPass ? "all pass" : "partial";
+                          return (
+                            <span title={`policy ${sf.policy}, security ${sf.security}, guard ${sf.guard}`}>
+                              <Badge tone={sf.allPass ? "success" : "warning"} icon="shield-check">
+                                {label}
+                              </Badge>
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3">
                         {r.merged ? (

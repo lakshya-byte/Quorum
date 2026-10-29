@@ -39,13 +39,22 @@ export type RunSafety = {
 };
 
 /** Collapse RunSafety into three words for the history table: pass | fail | n/a. */
-export function safetySummary(s: RunSafety | null | undefined): { guard: string; policy: string; security: string; allPass: boolean } | null {
+export function safetySummary(
+  s: RunSafety | null | undefined,
+): { guard: string; policy: string; security: string; allPass: boolean; anyFail: boolean } | null {
   if (!s) return null;
-  const guard =
-    typeof s.guard === "string" ? s.guard : s.guard ? (Object.values(s.guard).every((v) => v === "pass") ? "pass" : "fail") : "n/a";
-  const policy = typeof s.policy === "string" ? s.policy : s.policy ? (s.policy.best_ok === false ? "fail" : "pass") : "n/a";
-  const security = typeof s.security === "string" ? s.security : s.security ? (s.security.best_ok === false ? "fail" : "pass") : "n/a";
-  return { guard, policy, security, allPass: [guard, policy, security].every((v) => v === "pass") };
+  // "n/a" means the check did not run (for example no output guard on an unsolved run); it is never shown as a pass.
+  let guard = "n/a";
+  if (typeof s.guard === "string") guard = s.guard;
+  else if (s.guard) {
+    const v = Object.values(s.guard);
+    guard = v.some((x) => x === "fail" || x === "block" || x === "blocked") ? "fail" : v.length > 0 && v.every((x) => x === "pass") ? "pass" : "n/a";
+  }
+  const best = (o: { best_ok?: boolean | null }) => (o.best_ok === false ? "fail" : o.best_ok === true ? "pass" : "n/a");
+  const policy = typeof s.policy === "string" ? s.policy : s.policy ? best(s.policy) : "n/a";
+  const security = typeof s.security === "string" ? s.security : s.security ? best(s.security) : "n/a";
+  const all = [guard, policy, security];
+  return { guard, policy, security, allPass: all.every((v) => v === "pass"), anyFail: all.some((v) => v === "fail") };
 }
 
 export type Run = {
