@@ -130,3 +130,11 @@ def test_events_and_pr_need_secret(client: TestClient) -> None:
     assert client.get("/runs/x/events").status_code == 401
     assert client.get("/runs/x").status_code == 401
     assert client.post("/runs/x/pr").status_code == 401
+
+
+def test_pr_without_github_config_is_a_clear_503(client: TestClient) -> None:
+    run_id = client.post("/runs", json={"bug_id": "cart"}, headers=HEADERS).json()["run_id"]
+    read_sse(client, run_id)  # wait for the solved run to finish
+    resp = client.post(f"/runs/{run_id}/pr", headers=HEADERS)
+    assert resp.status_code == 503
+    assert "GITHUB_TOKEN" in resp.json()["detail"]

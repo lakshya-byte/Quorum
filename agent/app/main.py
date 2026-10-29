@@ -120,6 +120,8 @@ def build_router(registry: RunRegistry) -> APIRouter:
         bug = get_bug(run.bug_id)
         if bug is None:
             raise HTTPException(404, "bug not found")
+        if not registry.settings.github_token or not registry.settings.github_repo:
+            raise HTTPException(503, "pull requests are not configured: set GITHUB_TOKEN and GITHUB_REPO on the agent")
         label = "an isolated Nebius Sandbox" if run.mode in ("live", "replay") else "an isolated local sandbox"
         draft = run.pr_draft if run.pr_draft and run.pr_draft.get("guard") == "pass" else None
         try:

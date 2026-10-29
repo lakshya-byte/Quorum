@@ -112,6 +112,14 @@ func (a *AgentClient) do(ctx context.Context, method, path string, body any, out
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode >= 500 {
+		// The agent reports deliberate upstream failures (GitHub down, PRs not
+		// configured) as 502/503 with a JSON detail: pass that message on.
+		// Anything else (500, a proxy page) stays a generic "unavailable".
+		if resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable {
+			if msg, ok := agentJSONMessage(raw); ok {
+				return &AgentError{Status: resp.StatusCode, Message: msg}
+			}
+		}
 		return fmt.Errorf("%w: status %d", ErrAgentUnavailable, resp.StatusCode)
 	}
 	if resp.StatusCode >= 300 {
@@ -125,15 +133,23 @@ func (a *AgentClient) do(ctx context.Context, method, path string, body any, out
 	return nil
 }
 
-// agentErrorMessage extracts FastAPI's {"detail": ...} or {"error": ...}.
-func agentErrorMessage(raw []byte) string {
+// agentJSONMessage extracts FastAPI's {"detail": ...} or {"error": ...}.
+func agentJSONMessage(raw []byte) (string, bool) {
 	var m map[string]any
 	if json.Unmarshal(raw, &m) == nil {
 		for _, k := range []string{"detail", "error", "message"} {
 			if s, ok := m[k].(string); ok && s != "" {
-				return s
+				return s, true
 			}
 		}
+	}
+	return "", false
+}
+
+// agentErrorMessage is agentJSONMessage with the raw body (truncated) as fallback.
+func agentErrorMessage(raw []byte) string {
+	if s, ok := agentJSONMessage(raw); ok {
+		return s
 	}
 	if len(raw) > 200 {
 		raw = raw[:200]
