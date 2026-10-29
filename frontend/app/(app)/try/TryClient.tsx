@@ -1,12 +1,13 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ApiError, demoApi, errorMessage, type Bug, type CreateRunResponse } from "../../_lib/api";
 import { useRunStream } from "../../_lib/useRunStream";
 import RunView from "../../_components/run/RunView";
 import { CopyCliButton, PrLink } from "../../_components/run/Actions";
 import BugPicker from "../_components/BugPicker";
+import { Button, Card, ErrorNote, LinkButton, PageHeader, Skeleton } from "../../_ui";
+import Link from "next/link";
 
 export default function TryClient() {
   const [bugs, setBugs] = useState<Bug[] | null>(null);
@@ -47,76 +48,56 @@ export default function TryClient() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <div className="inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-primary">
-          <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-          Live demo · no account needed
-        </div>
-        <h1 className="text-2xl sm:text-3xl text-white font-semibold tracking-tight">Watch an agent team fix a bug</h1>
-        <p className="text-[14px] text-on-surface-variant max-w-3xl leading-relaxed">
-          Pick a bug. A triage agent finds the cause, parallel proposers try different fixes in isolated sandboxes, a critic
-          keeps the promising ones, and the tests decide what is good. Guardrails and a policy gate check every step. Guest runs
-          use recorded or scripted runs (replay/fake mode).
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Live demo, no account needed"
+        title="Watch an agent team fix a bug"
+        description="Pick a bug. A triage agent finds the likely cause, parallel proposers try different fixes in isolated sandboxes, a critic keeps the promising ones, and the tests decide. Guest runs use recorded or scripted runs."
+      />
 
       {!run && (
-        <section className="rounded-xl border border-outline-variant/60 bg-[#0b0e15] p-4 sm:p-5 flex flex-col gap-4">
-          <h2 className="text-[13px] font-mono uppercase tracking-wider text-on-surface-variant">1 · Choose a bug</h2>
+        <Card className="flex flex-col gap-5 p-5">
+          <h2 className="text-[15px] font-semibold text-white">Choose a bug</h2>
           {loadError ? (
-            <p className="text-[13px] text-error">{loadError}</p>
+            <ErrorNote>{loadError}</ErrorNote>
           ) : !bugs ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="h-[86px] rounded-xl bg-surface-container-low animate-pulse" />
+                <Skeleton key={i} className="h-[92px] rounded-xl" />
               ))}
             </div>
           ) : (
             <BugPicker bugs={bugs} selected={selected} onSelect={setSelected} />
           )}
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-2 border-t border-outline-variant/40">
-            <button
-              onClick={start}
-              disabled={!selected || starting}
-              data-testid="start-run"
-              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-primary text-black text-[14px] font-semibold shadow-[0_0_24px_rgba(16,185,129,0.35)] hover:bg-[#34d399] disabled:opacity-60 transition-colors"
-            >
-              <span className={`material-symbols-outlined text-[18px] ${starting ? "animate-spin" : ""}`}>
-                {starting ? "progress_activity" : "play_arrow"}
-              </span>
+          <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center">
+            <Button onClick={start} disabled={!selected} loading={starting} icon="play" data-testid="start-run">
               {starting ? "Starting…" : "Run the agent team"}
-            </button>
-            <span className="text-[12px] text-on-surface-variant">Guests get 3 runs per hour.</span>
+            </Button>
+            <span className="text-[13px] text-on-surface-variant">Guests get 3 runs per hour.</span>
           </div>
           {startError && (
-            <div className={`rounded-lg border px-3.5 py-2.5 text-[13px] ${startError.limited ? "border-amber-400/40 bg-amber-400/5 text-amber-200" : "border-error/40 bg-error/5 text-error"}`}>
+            <ErrorNote tone={startError.limited ? "warning" : "error"}>
               {startError.message}
               {startError.limited && (
                 <>
                   {" "}
-                  <Link href="/signup" className="underline text-primary">
+                  <Link href="/signup" className="underline">
                     Create a free account
                   </Link>{" "}
                   to keep going.
                 </>
               )}
-            </div>
+            </ErrorNote>
           )}
-        </section>
+        </Card>
       )}
 
       {run && (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="font-mono text-[11px] text-on-surface-variant">run {run.runId}</span>
-            <button
-              onClick={() => setRun(null)}
-              disabled={!finished}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-outline-variant/60 text-[12.5px] text-on-surface-variant hover:text-white hover:bg-surface-container disabled:opacity-50"
-            >
-              <span className="material-symbols-outlined text-[16px]">restart_alt</span>
+            <span className="font-mono text-[12px] text-on-surface-variant">run {run.runId}</span>
+            <Button variant="secondary" size="sm" icon="refresh" onClick={() => setRun(null)} disabled={!finished}>
               Try another bug
-            </button>
+            </Button>
           </div>
           <RunView
             state={state}
@@ -127,13 +108,9 @@ export default function TryClient() {
                 {state.prUrl ? (
                   <PrLink url={state.prUrl} />
                 ) : (
-                  <Link
-                    href="/signup"
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-black text-[12.5px] font-semibold hover:bg-[#34d399]"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">call_merge</span>
+                  <LinkButton href="/signup" size="sm" icon="git-pr">
                     Sign up to open a PR
-                  </Link>
+                  </LinkButton>
                 )}
                 <CopyCliButton bugId={run.bugId} />
               </>

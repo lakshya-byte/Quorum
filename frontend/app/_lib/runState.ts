@@ -22,6 +22,11 @@ export type DoneEvent = {
   time_to_first_node_ms?: number | null;
 };
 
+export type RepoEvent = { full_name: string; branch: string; files?: number; language?: string; test_command?: string; truncated?: boolean };
+export type LocateEvent = { files: { path: string; reason?: string }[] };
+export type ReproEvent = { path?: string; test_name?: string; failed_on_original: boolean; output_tail?: string };
+export type PrEvent = { url: string; branch?: string; number?: number; fake?: boolean; updated?: boolean };
+
 export type StreamStatus = "idle" | "connecting" | "live" | "reconnecting" | "finished" | "lost";
 
 export type RunState = {
@@ -39,6 +44,12 @@ export type RunState = {
   depth: number;
   done: DoneEvent | null;
   prUrl: string | null;
+  repo: RepoEvent | null;
+  locate: LocateEvent | null;
+  repro: ReproEvent | null;
+  pr: PrEvent | null;
+  /** from an optional "slack" event; null = unknown */
+  slackSent: boolean | null;
   errors: { stage?: string; message: string }[];
   blocked: boolean;
   tokens: number;
@@ -64,6 +75,11 @@ export const initialRunState: RunState = {
   depth: 0,
   done: null,
   prUrl: null,
+  repo: null,
+  locate: null,
+  repro: null,
+  pr: null,
+  slackSent: null,
   errors: [],
   blocked: false,
   tokens: 0,
@@ -141,7 +157,7 @@ export function runReducer(s: RunState, a: RunAction): RunState {
     case "lost":
       return s.status === "finished" ? s : { ...s, status: "lost" };
     case "pr":
-      return { ...s, prUrl: a.url };
+      return { ...s, prUrl: a.url, pr: s.pr ?? { url: a.url } };
     case "snapshot": {
       const r = a.run;
       const finished = isFinishedRun(r);
@@ -153,6 +169,8 @@ export function runReducer(s: RunState, a: RunAction): RunState {
         mode: r.mode,
         engine: r.engine,
         prUrl: r.prUrl || null,
+        pr: r.prUrl ? { url: r.prUrl, branch: r.branch, number: r.prNumber ?? undefined } : null,
+        repo: r.kind === "repo" && r.repo ? { full_name: r.repo, branch: r.branch || "" } : null,
         fromSnapshot: true,
       };
       for (const n of r.nodes || []) next = addNode(next, n);
@@ -210,8 +228,16 @@ export function runReducer(s: RunState, a: RunAction): RunState {
         }
         case "done":
           return { ...base, done: { ...(d as unknown as DoneEvent), best: bestNodeId(d.best) }, endedAt: base.endedAt ?? a.at };
+        case "repo":
+          return { ...base, repo: d as unknown as RepoEvent };
+        case "locate":
+          return { ...base, locate: { files: Array.isArray(d.files) ? (d.files as LocateEvent["files"]) : [] } };
+        case "repro":
+          return { ...base, repro: d as unknown as ReproEvent };
+        case "slack":
+          return { ...base, slackSent: d.sent !== false };
         case "pr":
-          return d.url ? { ...base, prUrl: String(d.url) } : base;
+          return d.url ? { ...base, prUrl: String(d.url), pr: d as unknown as PrEvent } : base;
         case "error": {
           const e = { stage: d.stage as string | undefined, message: String(d.message || "The run failed.") };
           if (base.errors.some((x) => x.message === e.message && x.stage === e.stage)) return base;
@@ -244,4 +270,65 @@ export function totalTokens(s: RunState): number {
   const u = s.done?.usage;
   if (u && (u.prompt_tokens || u.completion_tokens)) return (u.prompt_tokens || 0) + (u.completion_tokens || 0);
   return s.tokens;
+}
+
+// ---- pipeline view (repo runs) ----
+export type StageId = "repo" | "locate" | "repro" | "propose" | "test" | "critic" | "review" | "pr";
+export type StageState = "pending" | "active" | "done" | "skipped" | "warn";
+export const STAGES: { id: StageId; label: string; hint: string }[] = [
+  { id: "repo", label: "Repo", hint: "Read the repository" },
+  { id: "locate", label: "Locate", hint: "Find the files that matter" },
+  { id: "repro", label: "Repro", hint: "Write a test that fails today" },
+  { id: "propose", label: "Propose", hint: "Parallel fix candidates" },
+  { id: "test", label: "Test", hint: "Run each in a sandbox" },
+  { id: "critic", label: "Critic", hint: "Learn from failures" },
+  { id: "review", label: "Review", hint: "Reviewer and output guard" },
+  { id: "pr", label: "PR", hint: "Open a pull request" },
+];
+
+export function isRepoRun(s: RunState): boolean {
+  return !!(s.repo || s.locate || s.repro || s.pr);
+}
+
+export function pipelineStages(s: RunState): { id: StageId; label: string; hint: string; state: StageState; detail?: string }[] {
+  const nonRoot = Object.values(s.nodes).filter((n) => n.parent != null);
+  const finished = s.status === "finished" || !!s.done;
+  const solved = !!s.done?.solved;
+  const ev: Record<StageId, boolean> = {
+    repo: !!s.repo,
+    locate: !!s.locate,
+    repro: !!s.repro,
+    propose: nonRoot.length > 0,
+    test: nonRoot.some((n) => n.total > 0),
+    critic: Object.keys(s.lessons).length > 0,
+    review: !!s.guards.output || solved,
+    pr: !!s.pr,
+  };
+  let reached = -1;
+  STAGES.forEach((st, i) => {
+    if (ev[st.id]) reached = i;
+  });
+  if (finished) reached = solved ? STAGES.length - 1 : Math.max(reached, 4);
+  const detail: Partial<Record<StageId, string>> = {
+    repo: s.repo ? `${s.repo.files ?? "?"} files · ${s.repo.language || "unknown"}` : undefined,
+    locate: s.locate ? `${s.locate.files.length} file${s.locate.files.length === 1 ? "" : "s"}` : undefined,
+    repro: s.repro ? (s.repro.failed_on_original ? "fails on original" : "not reproduced") : undefined,
+    propose: nonRoot.length ? `${nonRoot.length} candidate${nonRoot.length === 1 ? "" : "s"}` : undefined,
+    pr: s.pr ? (s.pr.number ? `#${s.pr.number}` : "opened") : undefined,
+  };
+  return STAGES.map((st, i) => {
+    let state: StageState;
+    if (finished) {
+      if (!solved && (st.id === "review" || st.id === "pr")) state = "skipped";
+      else if (st.id === "pr" && !s.pr) state = "skipped";
+      else if (st.id === "repro" && s.repro && !s.repro.failed_on_original) state = "warn";
+      else if (!ev[st.id] && i < reached && !(st.id === "repo" || st.id === "locate")) state = "done";
+      else state = ev[st.id] || i <= reached ? "done" : "skipped";
+    } else if (i < reached) state = "done";
+    else if (i === reached) state = "active";
+    else if (i === reached + 1 && s.status !== "idle") state = "active";
+    else state = "pending";
+    if (!finished && i === reached && ev[st.id] && (st.id === "repo" || st.id === "locate" || st.id === "repro") ) state = "done";
+    return { ...st, state, detail: detail[st.id] };
+  });
 }

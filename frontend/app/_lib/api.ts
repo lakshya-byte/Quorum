@@ -25,6 +25,10 @@ export type RunNode = {
   tokens?: number | { prompt_tokens?: number; completion_tokens?: number };
   policy?: { ok: boolean; reasons?: string[] };
   security?: { ok: boolean; new_findings?: unknown[] };
+  /** multi-file candidate: path -> full file content (code is the primary file) */
+  files?: Record<string, string>;
+  /** unified diff text for the whole candidate (capped by the agent) */
+  diff?: string;
 };
 
 export type Run = {
@@ -43,7 +47,54 @@ export type Run = {
   prUrl: string | null;
   createdAt: string;
   completedAt: string | null;
+  kind?: "bug" | "repo";
+  repo?: string;
+  branch?: string;
+  task?: string;
+  prNumber?: number | null;
+  filesChanged?: number | null;
+  source?: "web" | "cli" | "slack" | "github";
+  parentRunId?: string | null;
+  prBranch?: string | null;
+  merged?: { by?: string; at?: string } | null;
+  cost?: { tokens?: number; usd?: number | null } | null;
+  safety?: { policy?: string; security?: string; guard?: string } | null;
+  traceId?: string | null;
+  langsmithUrl?: string | null;
 };
+
+export type GithubStatus = {
+  connected: boolean;
+  mode: "app" | "demo" | null;
+  login?: string | null;
+  avatarUrl?: string | null;
+  installationId?: number | string | null;
+  appConfigured?: boolean;
+  repoCount?: number;
+};
+export type PrInfo = {
+  url: string;
+  number: number;
+  state: string;
+  mergeable: boolean | null;
+  checks: { state: "success" | "failure" | "pending" | "none"; failing?: string[] };
+  mergeAllowed: boolean;
+  reason?: string;
+  merged?: { by?: string; at?: string } | null;
+};
+export type MergeResult = { merged?: boolean; message?: string; warning?: string; url?: string };
+export type SlackLinkCode = { code: string; expiresAt: string };
+export type Notification = { id: string; kind: string; title: string; body?: string; runId?: string; read: boolean; createdAt: string };
+export type RepoSummary = {
+  fullName: string;
+  private: boolean;
+  defaultBranch: string;
+  description: string;
+  language: string;
+  updatedAt: string;
+};
+export type BranchInfo = { name: string; default: boolean };
+export type SlackStatus = { configured: boolean; webhookUrlMasked?: string | null };
 
 export type CreateRunResponse = { runId: string; mode: string; engine: string; notice?: string };
 export type ApiToken = { id: string; name: string; prefix: string; createdAt: string; lastUsedAt: string | null };
@@ -137,6 +188,44 @@ export const demoApi = {
   bugs: () => api<Bug[]>("/api/demo/bugs"),
   create: (bugId: string) => api<CreateRunResponse>("/api/demo/runs", { method: "POST", json: { bugId } }),
   eventsUrl: (id: string) => `${API_URL}/api/demo/runs/${encodeURIComponent(id)}/events`,
+};
+
+export const githubApi = {
+  status: () => api<GithubStatus>("/api/github/status"),
+  connectUrl: () => api<{ url: string }>("/api/github/connect"),
+  demo: () => api<GithubStatus>("/api/github/demo", { method: "POST" }),
+  disconnect: () => api<unknown>("/api/github", { method: "DELETE" }),
+  repos: (q = "") => api<RepoSummary[] | null>(`/api/github/repos?q=${encodeURIComponent(q)}`),
+  branches: (fullName: string) => {
+    const [owner, repo] = fullName.split("/");
+    return api<BranchInfo[] | null>(`/api/github/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches`);
+  },
+};
+
+export const slackApi = {
+  get: () => api<SlackStatus>("/api/settings/slack"),
+  save: (webhookUrl: string) => api<SlackStatus>("/api/settings/slack", { method: "PUT", json: { webhookUrl } }),
+  clear: () => api<unknown>("/api/settings/slack", { method: "DELETE" }),
+  test: () => api<{ message?: string }>("/api/settings/slack/test", { method: "POST" }),
+  linkCode: () => api<SlackLinkCode>("/api/slack/link-code", { method: "POST" }),
+};
+
+export const tasksApi = {
+  create: (repo: string, branch: string, task: string, autoPr = true) =>
+    api<{ runId: string }>("/api/tasks", { method: "POST", json: { repo, branch, task, autoPr } }),
+};
+
+export const prApi = {
+  get: (id: string) => api<PrInfo>(`/api/runs/${encodeURIComponent(id)}/pr`),
+  merge: (id: string, method: "squash" | "merge" | "rebase" = "squash") =>
+    api<MergeResult>(`/api/runs/${encodeURIComponent(id)}/merge`, { method: "POST", json: { method } }),
+  followup: (id: string, message: string) =>
+    api<{ runId: string }>(`/api/runs/${encodeURIComponent(id)}/followup`, { method: "POST", json: { message } }),
+};
+
+export const notificationsApi = {
+  list: () => api<Notification[] | null>("/api/notifications"),
+  read: (id: string) => api<unknown>(`/api/notifications/${encodeURIComponent(id)}/read`, { method: "POST" }),
 };
 
 export const tokensApi = {

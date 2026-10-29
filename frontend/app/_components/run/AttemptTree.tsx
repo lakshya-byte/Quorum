@@ -2,6 +2,7 @@
 
 import type { RunState } from "../../_lib/runState";
 import NodeCard from "./NodeCard";
+import { Icon } from "../../_ui";
 
 type TreeProps = {
   state: RunState;
@@ -9,6 +10,7 @@ type TreeProps = {
   selectedId: number | null;
   onSelect: (id: number) => void;
   live: boolean;
+  compact?: boolean;
 };
 
 function Children({ parentId, ...p }: TreeProps & { parentId: number }) {
@@ -21,12 +23,12 @@ function Children({ parentId, ...p }: TreeProps & { parentId: number }) {
   return (
     <div className="mt-3 ml-2 sm:ml-3 pl-3 sm:pl-5 border-l-2 border-outline-variant/50 flex flex-col gap-3">
       <div className="flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-wider text-on-surface-variant">
-        <span className="material-symbols-outlined text-[14px] text-secondary">call_split</span>
+        <Icon name="split" size={14} className="text-secondary" />
         <span>
           Round {depth} · {kids.length} parallel {kids.length === 1 ? "attempt" : "attempts"} from #{parentId}
         </span>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+      <div className={p.compact ? "grid grid-cols-1 gap-3 sm:grid-cols-2" : "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"}>
         {kids.map((id) => {
           const n = p.state.nodes[id];
           return (
@@ -78,7 +80,7 @@ export default function AttemptTree(p: TreeProps) {
             <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
             Agents proposing fixes in isolated sandboxes…
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+          <div className={p.compact ? "grid grid-cols-1 gap-3 sm:grid-cols-2" : "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"}>
             <div className="h-[132px] rounded-xl bg-surface-container-low/60 border border-outline-variant/40 animate-pulse" />
             <div className="hidden sm:block h-[132px] rounded-xl bg-surface-container-low/60 border border-outline-variant/40 animate-pulse" />
           </div>
