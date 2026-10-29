@@ -10,6 +10,7 @@ type TreeProps = {
   selectedId: number | null;
   onSelect: (id: number) => void;
   live: boolean;
+  compact?: boolean;
 };
 
 function Children({ parentId, ...p }: TreeProps & { parentId: number }) {
@@ -27,7 +28,7 @@ function Children({ parentId, ...p }: TreeProps & { parentId: number }) {
           Round {depth} · {kids.length} parallel {kids.length === 1 ? "attempt" : "attempts"} from #{parentId}
         </span>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+      <div className={p.compact ? "grid grid-cols-1 gap-3 sm:grid-cols-2" : "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"}>
         {kids.map((id) => {
           const n = p.state.nodes[id];
           return (
@@ -79,7 +80,7 @@ export default function AttemptTree(p: TreeProps) {
             <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
             Agents proposing fixes in isolated sandboxes…
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+          <div className={p.compact ? "grid grid-cols-1 gap-3 sm:grid-cols-2" : "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"}>
             <div className="h-[132px] rounded-xl bg-surface-container-low/60 border border-outline-variant/40 animate-pulse" />
             <div className="hidden sm:block h-[132px] rounded-xl bg-surface-container-low/60 border border-outline-variant/40 animate-pulse" />
           </div>

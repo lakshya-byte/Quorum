@@ -1,5 +1,6 @@
 "use client";
 
+import { Icon } from "../../_ui";
 import Image from "next/image";
 import Link from "next/link";
 import signinBackground from "@/public/signin-bg.png";
@@ -72,7 +73,7 @@ export default function SignInCard() {
               className="flex items-center gap-1 text-primary hover:text-primary/80 font-medium ml-1.5 transition-colors"
             >
               <span>Sign up</span>
-              <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+              <Icon name="arrow-right" size={14} />
             </Link>
           </div>
         </div>

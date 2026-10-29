@@ -1,5 +1,6 @@
 "use client";
 
+import { Icon } from "../../_ui";
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, authApi, errorMessage } from "../../_lib/api";
@@ -40,7 +41,7 @@ function Field({
       </div>
       <div className="relative rounded-lg shadow-sm">
         <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-on-surface-variant">
-          <span className="material-symbols-outlined text-[16px]">{icon}</span>
+          <Icon name={icon} size={16} />
         </div>
         {children}
       </div>
@@ -52,7 +53,7 @@ export function FormError({ message }: { message: string | null }) {
   if (!message) return null;
   return (
     <div role="alert" data-testid="auth-error" className="rounded-lg border border-error/40 bg-error/10 px-3 py-2 text-[13px] text-error flex items-start gap-2">
-      <span className="material-symbols-outlined text-[16px] mt-px">error</span>
+      <Icon name="alert" size={16} className="mt-px" />
       <span>{message}</span>
     </div>
   );
@@ -101,12 +102,12 @@ export function OtpForm({ email, onBack }: { email: string; onBack?: () => void 
     <form className="space-y-4" onSubmit={verify} data-testid="otp-form">
       <div className="text-center">
         <div className="mx-auto w-12 h-12 rounded-full bg-primary/10 border border-primary/40 flex items-center justify-center text-primary">
-          <span className="material-symbols-outlined text-[24px]">mark_email_unread</span>
+          <Icon name="mail" size={24} />
         </div>
         <h2 className="mt-3 text-lg font-semibold text-white">Check your email</h2>
         <p className="mt-1 text-[13px] text-on-surface-variant">We sent a 6-digit code to the address you entered.</p>
       </div>
-      <Field id="otp-code" label="Verification code" icon="pin">
+      <Field id="otp-code" label="Verification code" icon="key">
         <input
           id="otp-code"
           inputMode="numeric"
@@ -206,13 +207,13 @@ export function SignInForm() {
           onClick={() => setShow((v) => !v)}
           className={`absolute inset-y-0 right-0 pr-3 flex items-center ${show ? "text-primary" : "text-on-surface-variant hover:text-on-surface"}`}
         >
-          <span className="material-symbols-outlined text-[16px]">{show ? "visibility_off" : "visibility"}</span>
+          <Icon name={show ? "eye-off" : "eye"} size={16} />
         </button>
       </Field>
       <FormError message={error} />
       <button type="submit" disabled={busy} className={PRIMARY}>
         {busy ? "Signing in…" : "Sign in"}
-        {!busy && <span className="material-symbols-outlined text-[16px]">arrow_forward</span>}
+        {!busy && <Icon name="arrow-right" size={16} />}
       </button>
     </form>
   );
@@ -256,7 +257,7 @@ export function SignUpForm() {
           className={INPUT}
         />
       </Field>
-      <Field id="org-name" label="Company name" icon="apartment">
+      <Field id="org-name" label="Company name" icon="layers">
         <input
           id="org-name"
           type="text"
@@ -284,7 +285,7 @@ export function SignUpForm() {
       <FormError message={error} />
       <button type="submit" disabled={busy} className={PRIMARY}>
         {busy ? "Creating account…" : "Create account"}
-        {!busy && <span className="material-symbols-outlined text-[16px]">arrow_forward</span>}
+        {!busy && <Icon name="arrow-right" size={16} />}
       </button>
     </form>
   );
