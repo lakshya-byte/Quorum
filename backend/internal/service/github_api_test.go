@@ -361,7 +361,7 @@ func TestMaskAndValidateWebhook(t *testing.T) {
 }
 
 func TestRepoAndBranchValidation(t *testing.T) {
-	for _, ok := range []string{"octo/widgets", "a-b/c_d.e", "demo/text-tools"} {
+	for _, ok := range []string{"octo/widgets", "a-b/c_d.e", "demo/booking"} {
 		if !ValidRepoName(ok) {
 			t.Errorf("%q rejected", ok)
 		}

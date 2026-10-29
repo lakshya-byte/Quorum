@@ -538,7 +538,7 @@ func (s *RunService) Complete(ctx context.Context, agentRunID string, p Complete
 		before, after, err = s.runs.Complete(ctx, agentRunID, repository.RunCompletion{
 			Mode: p.Mode, Engine: p.Engine, Solved: p.Solved, BestNodeID: p.BestNodeID,
 			Nodes: p.Nodes, Usage: p.Usage, LatencyMs: int64(p.LatencyMs),
-			PRURL: p.PRURL, PRNumber: p.PRNumber, PRBranch: p.PRBranch, FilesChanged: p.FilesChanged,
+			PRURL: p.PRURL, PRNumber: p.PRNumber, PRBranch: p.PRBranch, FilesChanged: countFiles(p.FilesChanged),
 			Safety: p.Safety, Cost: costFromUsage(p.Usage), LangsmithURL: p.LangsmithURL,
 		})
 		if !errors.Is(err, repository.ErrNotFound) {
@@ -672,4 +672,20 @@ func (s *RunService) notifySlack(ctx context.Context, run *models.Run, reason st
 		}
 		observability.RecordEvent(bg, s.nr, "SlackNotified", attrs)
 	}()
+}
+
+// countFiles normalises the agent's files_changed (a count today; a list of
+// paths or a path->content map are accepted too) to a number.
+func countFiles(v any) int {
+	switch t := v.(type) {
+	case []any:
+		return len(t)
+	case map[string]any:
+		return len(t)
+	}
+	n, _ := toInt(v)
+	if n < 0 {
+		return 0
+	}
+	return n
 }

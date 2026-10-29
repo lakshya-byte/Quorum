@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"patchloop-backend/internal/models"
 	"patchloop-backend/internal/observability"
@@ -46,6 +47,9 @@ type MergeService struct {
 	github *GitHubService
 	runs   RunStore
 	svc    *RunService
+	// DemoChecksDelay makes the fake CI of demo PRs report "pending" for this
+	// long after the run finished, so the merge gate is visible in demos.
+	DemoChecksDelay time.Duration
 }
 
 func NewMergeService(github *GitHubService, runs RunStore, svc *RunService) *MergeService {
@@ -86,6 +90,15 @@ func (m *MergeService) Info(ctx context.Context, run *models.Run) (*PRInfo, erro
 		t := true
 		info.Mergeable = &t
 		info.Checks = ChecksSummary{State: "success", Failing: []string{}}
+		if m.DemoChecksDelay > 0 && run.Merged == nil {
+			since := run.CreatedAt
+			if run.CompletedAt != nil {
+				since = *run.CompletedAt
+			}
+			if m.svc.now().Sub(since) < m.DemoChecksDelay {
+				info.Checks = ChecksSummary{State: "pending", Failing: []string{}}
+			}
+		}
 		if run.Merged != nil {
 			info.State = "merged"
 		}

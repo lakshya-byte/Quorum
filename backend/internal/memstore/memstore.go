@@ -213,7 +213,9 @@ func (s *Store) findGH(match func(*models.GitHubConnection) bool) (*models.GitHu
 	return nil, repository.ErrNotFound
 }
 func (s *Store) FindByInstallation(ctx context.Context, id int64) (*models.GitHubConnection, error) {
-	return s.findGH(func(c *models.GitHubConnection) bool { return c.InstallationID == id && c.Mode == models.GitHubModeApp })
+	return s.findGH(func(c *models.GitHubConnection) bool {
+		return id != 0 && c.InstallationID == id && (c.Mode == models.GitHubModeApp || c.Mode == models.GitHubModeDemo)
+	})
 }
 func (s *Store) FindByLogin(ctx context.Context, login string) (*models.GitHubConnection, error) {
 	return s.findGH(func(c *models.GitHubConnection) bool { return c.Login == login && c.Mode == models.GitHubModeApp })

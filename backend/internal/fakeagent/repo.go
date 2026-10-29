@@ -212,7 +212,7 @@ func (a *Agent) repoCallback(rr *repoRun, userID string, ns []map[string]any, pr
 	payload := map[string]any{
 		"run_id": rr.id, "user_id": userID, "bug_id": rr.repo, "kind": "repo", "repo": rr.repo, "branch": rr.branch, "task": rr.task,
 		"mode": "fake", "engine": "graph", "solved": rr.solved, "best_node_id": 4, "nodes": ns, "usage": usage, "latency_ms": 4200,
-		"files_changed": []string{"src/app.py"},
+		"files_changed": 1, // the real agent reports a count
 		"safety":        map[string]any{"policy": map[string]any{"ok": true}, "security": map[string]any{"tool": "bandit", "new_findings": 0}, "guard": map[string]any{"input": "pass", "output": "pass"}},
 	}
 	if prURL != "" {

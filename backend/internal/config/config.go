@@ -52,6 +52,7 @@ type Config struct {
 
 	// Limits.
 	TasksPerUserPerHour   int
+	DemoChecksDelaySec    int // fake CI of demo PRs is "pending" this long (merge is refused meanwhile)
 	LiveRunsPerUserPerDay int
 	GuestRunsPerHour      int
 	TrustedProxies        []string
@@ -117,6 +118,7 @@ func Load() *Config {
 		GitHubWebURL: strings.TrimRight(getEnv("GITHUB_WEB_URL", "https://github.com"), "/"),
 
 		TasksPerUserPerHour:   getEnvInt("TASKS_PER_USER_PER_HOUR", 10),
+		DemoChecksDelaySec:    getEnvInt("DEMO_CHECKS_PENDING_SEC", 4),
 		LiveRunsPerUserPerDay: getEnvInt("LIVE_RUNS_PER_USER_PER_DAY", 10),
 		GuestRunsPerHour:      getEnvInt("GUEST_RUNS_PER_HOUR", 3),
 		TrustedProxies:        splitList(os.Getenv("TRUSTED_PROXIES")),

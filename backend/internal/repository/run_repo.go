@@ -171,7 +171,7 @@ type RunCompletion struct {
 	PRURL        string
 	PRNumber     int
 	PRBranch     string
-	FilesChanged any
+	FilesChanged int
 	Safety       map[string]any
 	Cost         *models.Cost
 	LangsmithURL string
@@ -205,7 +205,7 @@ func (r *RunRepository) Complete(ctx context.Context, agentRunID string, c RunCo
 	if c.PRBranch != "" {
 		set["pr_branch"] = c.PRBranch
 	}
-	if c.FilesChanged != nil {
+	if c.FilesChanged > 0 {
 		set["files_changed"] = c.FilesChanged
 	}
 	if c.Safety != nil {
@@ -255,7 +255,7 @@ func ApplyCompletion(prev models.Run, c RunCompletion, now time.Time) *models.Ru
 	if c.PRBranch != "" {
 		cur.PRBranch = c.PRBranch
 	}
-	if c.FilesChanged != nil {
+	if c.FilesChanged > 0 {
 		cur.FilesChanged = c.FilesChanged
 	}
 	if c.Safety != nil {
