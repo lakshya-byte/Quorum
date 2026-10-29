@@ -213,17 +213,26 @@ func redact(err error, secrets ...string) error {
 	return errors.New(msg)
 }
 
-func (s *RunService) StartRepoRun(ctx context.Context, in RepoRunInput) (*models.Run, error) {
-	task := strings.TrimSpace(in.Task)
+// ValidateRepoTask checks the user-supplied pieces of a repo task.
+func ValidateRepoTask(repo, branch, task string) error {
+	task = strings.TrimSpace(task)
 	if task == "" || len([]rune(task)) > 4000 {
-		return nil, ErrInvalidTask
+		return ErrInvalidTask
 	}
-	if !ValidRepoName(in.Repo) {
-		return nil, ErrInvalidRepo
+	if !ValidRepoName(repo) {
+		return ErrInvalidRepo
 	}
-	if in.Branch != "" && !ValidBranch(in.Branch) {
-		return nil, ErrInvalidBranch
+	if branch != "" && !ValidBranch(branch) {
+		return ErrInvalidBranch
 	}
+	return nil
+}
+
+func (s *RunService) StartRepoRun(ctx context.Context, in RepoRunInput) (*models.Run, error) {
+	if err := ValidateRepoTask(in.Repo, in.Branch, in.Task); err != nil {
+		return nil, err
+	}
+	task := strings.TrimSpace(in.Task)
 	if in.Engine != "" && in.Engine != "loop" && in.Engine != "graph" {
 		return nil, ErrInvalidEngine
 	}

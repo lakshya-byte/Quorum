@@ -37,11 +37,15 @@ func (h *RunHandler) CreateTask(c *gin.Context) {
 		return
 	}
 	userID := c.GetString(middleware.ContextUserIDKey)
+	if err := service.ValidateRepoTask(req.Repo, req.Branch, req.Task); err != nil {
+		serviceError(c, err) // malformed requests do not spend rate-limit budget
+		return
+	}
 	if h.taskLimit != nil {
 		if ok, wait := h.taskLimit.Allow(userID); !ok {
 			secs := int(math.Ceil(wait.Seconds()))
 			c.Header("Retry-After", strconv.Itoa(secs))
-			apiError(c, http.StatusTooManyRequests, "rate_limited", "task limit reached (10 per hour), try again later", gin.H{"retryAfterSec": secs})
+			apiError(c, http.StatusTooManyRequests, "rate_limited", "task limit reached for this hour, try again later", gin.H{"retryAfterSec": secs})
 			return
 		}
 	}

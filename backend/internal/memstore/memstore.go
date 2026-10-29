@@ -317,6 +317,9 @@ func (s *Store) NotificationStore() *Notifications { return &Notifications{s: s}
 
 type Notifications struct{ s *Store }
 
+// Notesx returns every notification of every user (tests).
+func (n *Notifications) Notesx() []models.Notification { return n.s.Notes() }
+
 func (n *Notifications) Create(ctx context.Context, v *models.Notification) error {
 	n.s.mu.Lock()
 	defer n.s.mu.Unlock()
