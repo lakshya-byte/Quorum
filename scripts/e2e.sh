@@ -353,6 +353,10 @@ PY
   "$SLACKDEV" interact -url "$BACKEND_URL" -secret "$SLACK_SIGNING_SECRET" -user "$SU" -channel "$SCH" -thread "$ROOT_TS" -action pl_merge -value "$SL_RUN" >"$WORK/sl-int1.txt" 2>&1
   ok "Slack: Merge button interaction acked (200)" "$(grep -q '^200' "$WORK/sl-int1.txt" && echo 1)" "$(head -c 80 "$WORK/sl-int1.txt")"
   wait_merge_allowed "$SL_RUN"
+  "$SLACKDEV" interact -url "$BACKEND_URL" -secret "$SLACK_SIGNING_SECRET" -user "U-STRANGER" -channel "$SCH" -thread "$ROOT_TS" -action pl_merge -value "$SL_RUN" >"$WORK/sl-int3.txt" 2>&1
+  sleep 1
+  C "${cj[@]}" -o "$WORK/slrun-pre.json" "$BACKEND_URL/api/runs/$SL_RUN"
+  ok "Slack: an unlinked stranger cannot use the Merge button (acked 200, PR still unmerged although checks are green)" "$(grep -q '^200' "$WORK/sl-int3.txt" && [ -z "$(json "$WORK/slrun-pre.json" 'd["merged"]["by"]')" ] && echo 1)" "merged=$(json "$WORK/slrun-pre.json" 'd["merged"]')"
   "$SLACKDEV" interact -url "$BACKEND_URL" -secret "$SLACK_SIGNING_SECRET" -user "$SU" -channel "$SCH" -thread "$ROOT_TS" -action pl_merge -value "$SL_RUN" >"$WORK/sl-int2.txt" 2>&1
   MERGED=""
   for _ in $(seq 1 30); do C "${cj[@]}" -o "$WORK/slrun.json" "$BACKEND_URL/api/runs/$SL_RUN"; [ -n "$(json "$WORK/slrun.json" 'd["merged"]["by"]')" ] && { MERGED=1; break; }; sleep 0.3; done
@@ -361,8 +365,6 @@ PY
   ok "Slack: merge result (refusal, then success) posted in the thread" "$([ "$(json "$WORK/slack-msgs2.json" "sum(1 for m in d if m['channel']=='$SCH' and m['threadTs']=='$ROOT_TS' and ('erge' in m['text']))")" -ge 2 ] 2>/dev/null && echo 1)" "$(json "$WORK/slack-msgs2.json" "[m['text'][:60] for m in d if m['channel']=='$SCH' and m['threadTs']=='$ROOT_TS'][-3:]")"
   C "${cj[@]}" -o "$WORK/slrun2.json" "$BACKEND_URL/api/runs/$SL_RUN"
   ok "Slack: run.slackSent is true (UI reads this, no extra event)" "$([ "$(json "$WORK/slrun2.json" 'd["slackSent"]')" = true ] && echo 1)" "slackSent=$(json "$WORK/slrun2.json" 'd["slackSent"]')"
-  "$SLACKDEV" interact -url "$BACKEND_URL" -secret "$SLACK_SIGNING_SECRET" -user "U-STRANGER" -channel "$SCH" -thread "$ROOT_TS" -action pl_merge -value "$SL_RUN" >"$WORK/sl-int3.txt" 2>&1
-  ok "Slack: an unlinked stranger cannot use the Merge button (acked, nothing merged by them)" "$(grep -q '^200' "$WORK/sl-int3.txt" && echo 1)"
 else
   rec "Slack checks" SKIP "fake Slack API / SLACK_SIGNING_SECRET not available (scripts/dev-up.sh starts them)"
 fi
