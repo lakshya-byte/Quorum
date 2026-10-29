@@ -13,6 +13,7 @@
 #   AGENT_VENV=/path/to/venv         reuse an existing Python venv (default: .logs/venv, created on demand)
 #   MONGO_DB_NAME=patchloop          backend database
 #   FAKE_DELAY_SCALE=1.0             agent fake-mode pacing (1.0 = demo speed)
+#   DEMO_CHECKS_PENDING_SEC=6        how long the fake CI of demo PRs stays "pending" (merge refused meanwhile)
 #   SLACK_FAKE=0                     do not start the fake Slack API / fake Slack env
 set -euo pipefail
 
@@ -160,6 +161,7 @@ fi
   export AGENT_URL="http://localhost:$AGENT_PORT" AGENT_SHARED_SECRET
   export JWT_ACCESS_SECRET JWT_REFRESH_SECRET MONGO_DB_NAME MONGO_URI TOKEN_ENC_KEY GITHUB_WEBHOOK_SECRET
   export FRONTEND_ORIGIN="http://localhost:$FRONTEND_PORT" FRONTEND_URL="http://localhost:$FRONTEND_PORT"
+  export DEMO_CHECKS_PENDING_SEC="${DEMO_CHECKS_PENDING_SEC:-6}"
   export PUBLIC_URL="http://localhost:$BACKEND_PORT" PUBLIC_APP_URL="http://localhost:$FRONTEND_PORT"
   # GitHub App credentials are deliberately NOT set: only the offline demo account works.
   if [ "$SLACK_FAKE" = "1" ]; then

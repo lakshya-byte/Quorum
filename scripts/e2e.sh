@@ -156,6 +156,14 @@ else
   rec "build CLI" FAIL "$(tail -n 3 "$WORK/cli-build.log" | tr '\n' ' ')"
 fi
 
+# wait_merge_allowed RUN_ID: poll the PR gate until the (fake) checks are green, up to 30 s.
+wait_merge_allowed() {
+  for _ in $(seq 1 60); do
+    C "${cj[@]}" -o "$WORK/wma.json" "$BACKEND_URL/api/runs/$1/pr"
+    [ "$(json "$WORK/wma.json" 'd["mergeAllowed"]')" = true ] && return 0; sleep 0.5
+  done
+  return 1
+}
 # ================================================================== REPO FLOW (GitHub demo account, Slack fake API, CLI)
 echo "repo flow ..."
 SLACK_URL="${SLACK_API_BASE:-http://localhost:19090}"
@@ -259,6 +267,8 @@ ok "merge result: merged by the user, fake demo merge" "$([ "$(json "$WORK/merge
 C "${cj[@]}" -o "$WORK/pr3.json" "$BACKEND_URL/api/runs/$FU_RUN/pr"
 C "${cj[@]}" -o "$WORK/frun2.json" "$BACKEND_URL/api/runs/$FU_RUN"
 ok "after merge: PR state merged, run.merged.by recorded" "$([ "$(json "$WORK/pr3.json" 'd["state"]')" = merged ] && [ -n "$(json "$WORK/frun2.json" 'd["merged"]["by"]')" ] && echo 1)"
+C "${cj[@]}" -o "$WORK/pr-parent.json" "$BACKEND_URL/api/runs/$TASK_RUN/pr"
+ok "merging the follow-up run also marks the original run's PR merged (same PR)" "$([ "$(json "$WORK/pr-parent.json" 'd["state"]')" = merged ] && echo 1)" "parent PR state=$(json "$WORK/pr-parent.json" 'd["state"]')"
 code="$(C "${cj[@]}" -o /dev/null -w '%{http_code}' "${jh[@]}" -X POST "$BACKEND_URL/api/runs/$FU_RUN/merge" -d '{}')"
 ok "merging twice is refused (409)" "$([ "$code" = 409 ] && echo 1)" "HTTP $code"
 code="$(C -b "$J2" -o /dev/null -w '%{http_code}' "$BACKEND_URL/api/runs/$TASK_RUN/pr")"
@@ -342,7 +352,7 @@ PY
   # Merge button right away: the fake CI is still pending, so it is refused in the thread.
   "$SLACKDEV" interact -url "$BACKEND_URL" -secret "$SLACK_SIGNING_SECRET" -user "$SU" -channel "$SCH" -thread "$ROOT_TS" -action pl_merge -value "$SL_RUN" >"$WORK/sl-int1.txt" 2>&1
   ok "Slack: Merge button interaction acked (200)" "$(grep -q '^200' "$WORK/sl-int1.txt" && echo 1)" "$(head -c 80 "$WORK/sl-int1.txt")"
-  sleep 6
+  wait_merge_allowed "$SL_RUN"
   "$SLACKDEV" interact -url "$BACKEND_URL" -secret "$SLACK_SIGNING_SECRET" -user "$SU" -channel "$SCH" -thread "$ROOT_TS" -action pl_merge -value "$SL_RUN" >"$WORK/sl-int2.txt" 2>&1
   MERGED=""
   for _ in $(seq 1 30); do C "${cj[@]}" -o "$WORK/slrun.json" "$BACKEND_URL/api/runs/$SL_RUN"; [ -n "$(json "$WORK/slrun.json" 'd["merged"]["by"]')" ] && { MERGED=1; break; }; sleep 0.3; done
@@ -373,7 +383,7 @@ if [ -x "$CLI" ]; then
   ok "CLI: merge refused while checks are pending (exit 1, reason printed)" "$([ $rc = 1 ] && grep -qiE 'pending|still running' "$WORK/cli-merge0.log" && echo 1)" "exit $rc: $(tr '\n' ' ' <"$WORK/cli-merge0.log" | head -c 120)"
   "$CLI" changes "$CLI_RUN" "Also keep punctuation-only tokens out of the counts." >"$WORK/cli-chg.out" 2>"$WORK/cli-chg.err"; rc=$?
   ok "CLI: patchloop changes pushes a commit to the same PR (exit 0)" "$([ $rc = 0 ] && tail -n1 "$WORK/cli-chg.out" | grep -q "$(echo "$CLI_PR" | sed 's/^PR: //')" && echo 1)" "exit $rc, $(tail -n1 "$WORK/cli-chg.out")"
-  sleep 5
+  wait_merge_allowed "$CLI_RUN"
   "$CLI" merge "$CLI_RUN" --yes >"$WORK/cli-merge1.log" 2>&1; rc=$?
   C "${cj[@]}" -o "$WORK/clirun.json" "$BACKEND_URL/api/runs/$CLI_RUN"
   ok "CLI: patchloop merge --yes merges once checks are green" "$([ $rc = 0 ] && [ -n "$(json "$WORK/clirun.json" 'd["merged"]["by"]')" ] && echo 1)" "exit $rc: $(tr '\n' ' ' <"$WORK/cli-merge1.log" | head -c 120)"
