@@ -23,6 +23,14 @@ func NewRunRepository(db *mongo.Database) *RunRepository {
 	return &RunRepository{col: db.Collection("runs", opts)}
 }
 
+func oid(id string) (bson.ObjectID, error) {
+	o, err := bson.ObjectIDFromHex(id)
+	if err != nil {
+		return o, ErrNotFound
+	}
+	return o, nil
+}
+
 func (r *RunRepository) Create(ctx context.Context, run *models.Run) error {
 	run.CreatedAt = time.Now().UTC()
 	res, err := r.col.InsertOne(ctx, run)
@@ -33,15 +41,23 @@ func (r *RunRepository) Create(ctx context.Context, run *models.Run) error {
 	return nil
 }
 
-func (r *RunRepository) FindByID(ctx context.Context, id bson.ObjectID) (*models.Run, error) {
+func (r *RunRepository) findOne(ctx context.Context, filter bson.M) (*models.Run, error) {
 	var run models.Run
-	if err := r.col.FindOne(ctx, bson.M{"_id": id}).Decode(&run); err != nil {
+	if err := r.col.FindOne(ctx, filter).Decode(&run); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 	return &run, nil
+}
+
+func (r *RunRepository) FindByID(ctx context.Context, id string) (*models.Run, error) {
+	o, err := oid(id)
+	if err != nil {
+		return nil, err
+	}
+	return r.findOne(ctx, bson.M{"_id": o})
 }
 
 func (r *RunRepository) ListByUser(ctx context.Context, userID string, limit int64) ([]models.Run, error) {
@@ -67,32 +83,98 @@ func (r *RunRepository) CountLiveSince(ctx context.Context, userID string, since
 	})
 }
 
-func (r *RunRepository) SetAgentRun(ctx context.Context, id bson.ObjectID, agentRunID, mode, engine string) error {
-	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": bson.M{
-		"agent_run_id": agentRunID, "mode": mode, "engine": engine,
-	}})
+func (r *RunRepository) set(ctx context.Context, id string, set bson.M) error {
+	o, err := oid(id)
+	if err != nil {
+		return err
+	}
+	_, err = r.col.UpdateOne(ctx, bson.M{"_id": o}, bson.M{"$set": set})
 	return err
 }
 
-func (r *RunRepository) SetStatus(ctx context.Context, id bson.ObjectID, status string) error {
-	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": bson.M{"status": status}})
-	return err
+func (r *RunRepository) SetAgentRun(ctx context.Context, id string, agentRunID, mode, engine, traceID string) error {
+	set := bson.M{"agent_run_id": agentRunID, "mode": mode, "engine": engine}
+	if traceID != "" {
+		set["trace_id"] = traceID
+	}
+	return r.set(ctx, id, set)
 }
 
-func (r *RunRepository) SetPRURL(ctx context.Context, id bson.ObjectID, url string) error {
-	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": bson.M{"pr_url": url}})
-	return err
+func (r *RunRepository) SetStatus(ctx context.Context, id string, status string) error {
+	return r.set(ctx, id, bson.M{"status": status})
 }
 
-// RunCompletion is what the agent reports when a run finishes.
+func (r *RunRepository) SetPR(ctx context.Context, id string, url string, number int, branch string) error {
+	set := bson.M{"pr_url": url}
+	if number > 0 {
+		set["pr_number"] = number
+	}
+	if branch != "" {
+		set["pr_branch"] = branch
+	}
+	return r.set(ctx, id, set)
+}
+
+func (r *RunRepository) SetMerged(ctx context.Context, id string, by string, at time.Time) error {
+	return r.set(ctx, id, bson.M{"merged": models.Merged{By: by, At: at}})
+}
+
+func (r *RunRepository) SetSlackSent(ctx context.Context, id string) error {
+	return r.set(ctx, id, bson.M{"slack_sent": true})
+}
+
+func (r *RunRepository) SetSlackRoot(ctx context.Context, id string, rootTS string) error {
+	return r.set(ctx, id, bson.M{"slack.root_ts": rootTS})
+}
+
+func (r *RunRepository) FindBySlackThread(ctx context.Context, channel, threadTS string) (*models.Run, error) {
+	// Newest first: a follow-up child shares its parent's thread.
+	var run models.Run
+	err := r.col.FindOne(ctx, bson.M{"slack.channel": channel, "slack.thread_ts": threadTS},
+		options.FindOne().SetSort(bson.D{{Key: "created_at", Value: -1}})).Decode(&run)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (r *RunRepository) FindByPR(ctx context.Context, repo string, number int) (*models.Run, error) {
+	var run models.Run
+	err := r.col.FindOne(ctx, bson.M{"repo": repo, "pr_number": number},
+		options.FindOne().SetSort(bson.D{{Key: "created_at", Value: -1}})).Decode(&run)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (r *RunRepository) CountChildren(ctx context.Context, parentID string) (int64, error) {
+	return r.col.CountDocuments(ctx, bson.M{"parent_run_id": parentID})
+}
+
+// RunCompletion is what the agent reports when a run finishes. Optional
+// fields are only written when non-empty.
 type RunCompletion struct {
-	Mode       string
-	Engine     string
-	Solved     bool
-	BestNodeID any
-	Nodes      []any
-	Usage      map[string]any
-	LatencyMs  int64
+	Mode         string
+	Engine       string
+	Solved       bool
+	BestNodeID   any
+	Nodes        []any
+	Usage        map[string]any
+	LatencyMs    int64
+	PRURL        string
+	PRNumber     int
+	PRBranch     string
+	FilesChanged any
+	Safety       map[string]any
+	Cost         *models.Cost
+	LangsmithURL string
 }
 
 // Complete marks the run with the given agent run id as completed and
@@ -114,6 +196,27 @@ func (r *RunRepository) Complete(ctx context.Context, agentRunID string, c RunCo
 	if c.Engine != "" {
 		set["engine"] = c.Engine
 	}
+	if c.PRURL != "" {
+		set["pr_url"] = c.PRURL
+	}
+	if c.PRNumber > 0 {
+		set["pr_number"] = c.PRNumber
+	}
+	if c.PRBranch != "" {
+		set["pr_branch"] = c.PRBranch
+	}
+	if c.FilesChanged != nil {
+		set["files_changed"] = c.FilesChanged
+	}
+	if c.Safety != nil {
+		set["safety"] = c.Safety
+	}
+	if c.Cost != nil {
+		set["cost"] = c.Cost
+	}
+	if c.LangsmithURL != "" {
+		set["langsmith_url"] = c.LangsmithURL
+	}
 	var prev models.Run
 	err = r.col.FindOneAndUpdate(ctx, bson.M{"agent_run_id": agentRunID}, bson.M{"$set": set},
 		options.FindOneAndUpdate().SetReturnDocument(options.Before)).Decode(&prev)
@@ -123,6 +226,12 @@ func (r *RunRepository) Complete(ctx context.Context, agentRunID string, c RunCo
 		}
 		return nil, nil, err
 	}
+	return &prev, ApplyCompletion(prev, c, now), nil
+}
+
+// ApplyCompletion returns run with a completion merged in (shared by the
+// Mongo and in-memory stores so both behave identically).
+func ApplyCompletion(prev models.Run, c RunCompletion, now time.Time) *models.Run {
 	cur := prev
 	cur.Status = models.RunStatusCompleted
 	cur.Solved = c.Solved
@@ -137,5 +246,26 @@ func (r *RunRepository) Complete(ctx context.Context, agentRunID string, c RunCo
 	if c.Engine != "" {
 		cur.Engine = c.Engine
 	}
-	return &prev, &cur, nil
+	if c.PRURL != "" {
+		cur.PRURL = c.PRURL
+	}
+	if c.PRNumber > 0 {
+		cur.PRNumber = c.PRNumber
+	}
+	if c.PRBranch != "" {
+		cur.PRBranch = c.PRBranch
+	}
+	if c.FilesChanged != nil {
+		cur.FilesChanged = c.FilesChanged
+	}
+	if c.Safety != nil {
+		cur.Safety = c.Safety
+	}
+	if c.Cost != nil {
+		cur.Cost = c.Cost
+	}
+	if c.LangsmithURL != "" {
+		cur.LangsmithURL = c.LangsmithURL
+	}
+	return &cur
 }

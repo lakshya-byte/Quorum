@@ -1,7 +1,7 @@
 # patchloop CLI
 
 Start PatchLoop runs from your terminal and watch the agents' search tree live. The tests decide
-which fix wins; agents can never merge. `patchloop pr` opens a PR for a human to review.
+which fix wins; agents can never merge: a human reviews and merges the pull request.
 
 ## Install
 
@@ -28,19 +28,60 @@ The token is checked against `/api/auth/me` and saved to `~/.config/patchloop/co
 (mode 0600; `$XDG_CONFIG_HOME` is honoured, `PATCHLOOP_CONFIG` overrides the path).
 `--api` or `PATCHLOOP_API` override the saved backend URL for one command.
 
+## The repo flow
+
+```bash
+patchloop login --token plk_xxxxxxxx --api http://localhost:8080
+patchloop doctor                         # API reachable? logged in? GitHub? Slack?
+patchloop connect github                 # opens the GitHub App install page, waits until you finish
+patchloop repos                          # repos you granted to the App
+patchloop fix --repo octo/widgets "pagination returns the wrong last page"
+patchloop merge <run-id>                 # you merge, with your own GitHub permissions
+patchloop changes <run-id> "also handle page 0"   # one more commit on the same PR
+```
+
+No GitHub App configured, or no network? `patchloop connect github --demo` connects an offline
+demo account with three bundled repos (`demo/inventory-api`, `demo/billing-utils`,
+`demo/text-tools`); PRs and merges there are clearly labelled fake.
+
+`fix --repo` prints a live tree: repo scan, located files, the reproducer test (accepted only if it
+fails on the original code), each round's candidates with tests passed, the verdict and the PR
+link, with a spinner while it waits. The PR URL is the last stdout line (`PR: https://...`), the
+rest of the chatter goes to stderr, so `url=$(patchloop fix ... | tail -1)` works.
+
+Exit codes of `fix`/`changes`: **0** solved, **1** not solved, **2** error (API error, not
+connected, rate limited, stream died). Errors print a `hint:` with the next command to run.
+Ctrl-C closes only the stream (exit 130); resume with `patchloop watch <run-id>`.
+
+`merge` shows the PR state and its checks, refuses (exit 1, with the reason) unless the PR is
+open, mergeable and checks are green (a repo with no CI is allowed, with a warning), asks for
+confirmation (skip with `--yes`) and merges as **you**: the agents have no merge ability.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `patchloop login --token plk_... [--api URL]` | verify and save a token |
 | `patchloop whoami` | show the account behind the token |
-| `patchloop bugs` | list bugs |
-| `patchloop fix <bug-id> [--engine graph\|loop] [--replay] [--json]` | start a run and stream it; exit 0 if solved, 1 if not |
-| `patchloop runs` | your recent runs |
+| `patchloop doctor [--json]` | check API, login, GitHub, Slack; exit 1 if something needed is broken |
+| `patchloop status [--json]` | API, GitHub and Slack at a glance |
+| `patchloop connect github [--demo] [--no-open]` | install the GitHub App (or use the demo account) |
+| `patchloop repos [--q text] [--json]` | repos PatchLoop can work on |
+| `patchloop fix --repo owner/name [--branch b] [--no-pr] [--json] "problem"` | fix a bug in a repo and open a PR |
+| `patchloop fix <bug-id> [--engine graph\|loop] [--replay] [--json]` | the bundled-bug demo flow |
+| `patchloop merge <run-id> [--yes] [--method squash\|merge\|rebase] [--json]` | merge the run's PR as you |
+| `patchloop changes <run-id> "message"` | ask for changes: a new commit on the same PR |
+| `patchloop pr <run-id> [--status]` | open the PR for a solved run, or show its checks |
+| `patchloop runs` | your recent runs (repo, source, status, PR) |
 | `patchloop watch <run-id> [--json]` | stream an existing run (replays past events first) |
-| `patchloop pr <run-id>` | open a GitHub PR with the winning fix, prints its URL |
+| `patchloop slack link` | one-time code; then run `/patchloop link <code>` in Slack |
+| `patchloop slack set <url> \| test \| clear` | per-user incoming webhook for completion messages |
+| `patchloop completion bash\|zsh\|fish\|powershell` | shell completion |
 
-## Example
+`--json` prints machine-readable output (raw events, one per line, for streams).
+Colour and the spinner are off when `NO_COLOR` is set, `TERM=dumb` or output is not a terminal.
+
+## Bundled-bug example
 
 ```
 $ patchloop fix cart --engine graph
@@ -65,13 +106,6 @@ $ echo $?
 ```
 
 Nodes are indented by depth and coloured by tests passed: green = all, amber = some, red = none.
-Colour is off when `NO_COLOR` is set, `TERM=dumb`, or output is not a terminal.
-
-`--json` prints each raw event (`{"type":...,"data":{...}}`) on its own line, e.g.
-`patchloop fix cart --json | jq -c 'select(.type=="node") | .data.passed'`.
-
-**Ctrl-C** closes the stream only (exit 130); the run keeps going on the server. Resume with
-`patchloop watch <run-id>`.
 
 ## Tests
 
