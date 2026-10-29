@@ -344,7 +344,7 @@ function buildRepoScript(repo, branch, run, opts = {}) {
       output: blocked ? `Blocked by the policy gate before execution.\n${blocked.map((r) => `- ${r}`).join("\n")}` : repoOutput(repo, failing, repo.repro.test_name),
       passed: blocked ? 0 : repo.total - failing,
       total: repo.total,
-      score: blocked ? 0 : Math.round(((repo.total - failing) / repo.total - 0.002 * (c ? Object.keys(c.edits).length : 0)) * 1000) / 1000,
+      score: blocked ? 0 : Math.round(((repo.total - failing) / repo.total - 0.002 * (c ? Object.keys(c.override || {}).length : 0)) * 1000) / 1000,
       model: id === 0 ? null : depth > 1 ? sup : nano,
       latency_ms: id === 0 ? 520 : 2100 + ((id * 311) % 2300),
       tokens: tk,
@@ -425,7 +425,6 @@ function buildRepoScript(repo, branch, run, opts = {}) {
     const number = ++prCounter;
     const prBranch = `patchloop/${run.task.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 32)}-${Math.floor(Date.now() / 1000)}`;
     push(650, "pr", { url: `https://github.com/${repo.fullName}/pull/${number}`, branch: prBranch, number, fake: true });
-    if (slackHooks.has(run.userId)) push(250, "slack", { sent: true });
   }
   push(20, "end", {});
   return ev;
@@ -436,8 +435,8 @@ function prStatus(run) {
   if (!pr) return null;
   const age = Date.now() - pr.createdAt;
   let checks;
-  if (run.repo === "demo/text-tools") checks = { state: "none", failing: [] };
-  else if (run.repo === "demo/inventory-api" && age < 6000 * SPEED) checks = { state: "pending", failing: [] };
+  if (run.repo === "demo/booking") checks = { state: "none", failing: [] };
+  else if (run.repo === "demo/shop-api" && age < 6000 * SPEED) checks = { state: "pending", failing: [] };
   else checks = { state: "success", failing: [] };
   const open = !run.merged;
   let reason = "";
@@ -493,7 +492,7 @@ function createRepoRun({ repo, branch, task, userId, autoPr = true, parent, foll
     filesChanged: null,
     merged: null,
     cost: { tokens: 0, usd: null },
-    safety: { policy: "pass", security: "pass", guard: "pass" },
+    safety: { guard: { input: "pass", output: "pass" }, policy: { best_ok: true, blocked: 1, candidates: 4, reasons: ["Touches .github/: workflows are off limits"] }, security: { best_ok: true, blocked: 0, scanned: true, scanner: "bandit" } },
     traceId: "tr_" + rid(6),
     langsmithUrl: null,
     pr: parent?.pr ?? null,
@@ -513,7 +512,13 @@ function createRepoRun({ repo, branch, task, userId, autoPr = true, parent, foll
         if (!parent) addNote(userId, "pr", "Pull request opened", `${repo.fullName} #${e.data.number} is ready for review`, id);
         else addNote(userId, "pr", "Pull request updated", `${repo.fullName} #${e.data.number} has a new commit`, id);
       }
-      if (e.type === "slack") slackLog.push({ at: now(), kind: "run-complete", runId: id, repo: repo.fullName, prUrl: run.prUrl });
+      if (e.type === "end" && slackHooks.has(run.userId) && run.pr) {
+        // like the backend: the completion message goes out after the run finished, then run.slackSent turns true
+        setTimeout(() => {
+          run.slackSent = true;
+          slackLog.push({ at: now(), kind: "run-complete", runId: id, repo: repo.fullName, prUrl: run.prUrl });
+        }, 400 * SPEED);
+      }
       if (e.type === "done") {
         const n = run.nodes.find((x) => x.id === e.data.best);
         run.filesChanged = n?.files ? Object.keys(n.files).filter((p) => n.files[p] !== repo.files[p]).length : null;
@@ -618,8 +623,8 @@ function streamRun(req, res, run) {
   req.on("close", cleanup);
 }
 
-const RUN_FIELDS = ["id", "userId", "bugId", "agentRunId", "mode", "engine", "status", "solved", "bestNodeId", "nodes", "usage", "latencyMs", "prUrl", "createdAt", "completedAt", "kind", "repo", "branch", "task", "source", "prNumber", "prBranch", "parentRunId", "filesChanged", "merged", "cost", "safety", "traceId", "langsmithUrl"];
-const publicRun = (r) => Object.fromEntries(RUN_FIELDS.map((k) => [k, r[k] === undefined ? null : r[k]]).map(([k, v]) => [k, k === "kind" && v === null ? "bug" : v]));
+const RUN_FIELDS = ["id", "userId", "bugId", "agentRunId", "mode", "engine", "status", "solved", "bestNodeId", "nodes", "usage", "latencyMs", "prUrl", "createdAt", "completedAt", "kind", "repo", "branch", "task", "source", "prNumber", "prBranch", "parentRunId", "filesChanged", "merged", "cost", "safety", "traceId", "langsmithUrl", "slackSent"];
+const publicRun = (r) => Object.fromEntries(RUN_FIELDS.map((k) => [k, r[k] === undefined ? null : r[k]]).map(([k, v]) => [k, k === "kind" && v === null ? "bug" : k === "slackSent" ? !!v : v]));
 
 function maskHook(u) {
   return u.slice(0, 27) + "..." + u.slice(-4);
@@ -819,7 +824,10 @@ async function handle(req, res) {
   }
 
   // ----- notifications -----
-  if (m === "GET" && p === "/api/notifications") return json(res, 200, notifications.filter((n) => n.userId === user.id).slice(0, 30));
+  if (m === "GET" && p === "/api/notifications") {
+    const mine = notifications.filter((n) => n.userId === user.id).slice(0, 30);
+    return json(res, 200, { notifications: mine, unread: mine.filter((n) => !n.read).length });
+  }
   if (m === "POST" && (match = p.match(/^\/api\/notifications\/([^/]+)\/read$/))) {
     const n = notifications.find((x) => x.id === match[1] && x.userId === user.id);
     if (n) n.read = true;

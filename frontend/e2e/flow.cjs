@@ -120,10 +120,10 @@ async function startMock() {
 
     // ---- /new: three steps
     await page.goto(FRONT + "/new");
-    await page.locator('[data-repo="demo/inventory-api"]').click();
+    await page.locator('[data-repo="demo/shop-api"]').click();
     await shot(page, "new-1-repo", "d");
     await page.getByTestId("next").click();
-    await page.getByTestId("task-input").fill("Reserving the last unit of an item fails with 'out of stock'.");
+    await page.getByTestId("task-input").fill("Checkout totals are wrong when a percentage coupon is used.");
     await shot(page, "new-2-task", "d");
     await page.getByTestId("next").click();
     await page.getByTestId("step-review").waitFor();
@@ -155,7 +155,7 @@ async function startMock() {
 
     // ---- ask for changes -> follow-up run on the same PR
     await page.getByTestId("changes-toggle").click();
-    await page.fill("#followup", "Also add a test for releasing more than reserved.");
+    await page.fill("#followup", "Also add a test for a coupon of 100 percent.");
     await page.getByTestId("changes-send").click();
     await page.waitForURL((u) => /\/runs\//.test(u.pathname) && !u.pathname.endsWith(run1), { timeout: 10000 });
     await page.getByText("Pull request updated").waitFor({ timeout: 40000 });
@@ -175,7 +175,7 @@ async function startMock() {
 
     // ---- second run on a repo with no CI: warning
     await page.goto(FRONT + "/new");
-    await page.locator('[data-repo="demo/text-tools"]').click();
+    await page.locator('[data-repo="demo/booking"]').click();
     await page.getByTestId("next").click();
     await page.getByTestId("task-input").fill("word_count is wrong when words are separated by several spaces.");
     await page.getByTestId("next").click();
@@ -233,7 +233,7 @@ async function startMock() {
       await shot(mp, name, "m");
     }
     await mp.goto(FRONT + "/new");
-    await mp.locator('[data-repo="demo/billing-utils"]').click();
+    await mp.locator('[data-repo="demo/wordstats"]').click();
     await overflow("new-1");
     await shot(mp, "new-1-repo", "m");
     await mp.getByTestId("next").click();
