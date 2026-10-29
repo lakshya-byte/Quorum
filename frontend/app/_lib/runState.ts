@@ -6,7 +6,14 @@
 import type { Run, RunNode, Usage } from "./api";
 
 export type GuardStage = "input" | "policy" | "output";
-export type GuardEvent = { stage: GuardStage; verdict: "pass" | "block"; reasons?: string[]; latency_ms?: number };
+export type GuardEvent = {
+  stage: GuardStage;
+  verdict: "pass" | "block";
+  reasons?: string[];
+  latency_ms?: number;
+  /** true when summarised from node.policy (the agent sends policy per node, not as a guard event) */
+  derived?: boolean;
+};
 export type DoneEvent = {
   solved: boolean;
   best: number | null;
@@ -96,7 +103,31 @@ function addNode(s: RunState, n: RunNode): RunState {
     children = { ...children, [key]: [...(children[key] || []), n.id] };
     tokens += nodeTokens(n);
   }
-  return { ...s, nodes, order, children, tokens, depth: Math.max(s.depth, n.depth || 0) };
+  let guards = s.guards;
+  // CONTRACT: the policy gate result travels on each node (node.policy), not as a guard event.
+  // Summarise it for the policy pill; a blocked candidate never blocks the whole run.
+  if (n.policy && (!guards.policy || guards.policy.derived)) {
+    const blockedIds = Object.values(nodes)
+      .filter((x) => x.policy && x.policy.ok === false)
+      .map((x) => `#${x.id}`);
+    guards = {
+      ...guards,
+      policy: {
+        stage: "policy",
+        verdict: "pass",
+        derived: true,
+        reasons: blockedIds.length ? [`blocked before execution: ${blockedIds.join(", ")}`] : ["every candidate passed the gate"],
+      },
+    };
+  }
+  return { ...s, nodes, order, children, tokens, guards, depth: Math.max(s.depth, n.depth || 0) };
+}
+
+/** done.best is the best node object in the agent's stream (a node id in saved runs and mocks). */
+export function bestNodeId(best: unknown): number | null {
+  if (typeof best === "number") return best;
+  if (best && typeof best === "object" && typeof (best as { id?: unknown }).id === "number") return (best as { id: number }).id;
+  return null;
 }
 
 export function runReducer(s: RunState, a: RunAction): RunState {
@@ -178,7 +209,7 @@ export function runReducer(s: RunState, a: RunAction): RunState {
           return { ...base, lessons: { ...base.lessons, [id]: [...prev, lesson] } };
         }
         case "done":
-          return { ...base, done: d as unknown as DoneEvent, endedAt: base.endedAt ?? a.at };
+          return { ...base, done: { ...(d as unknown as DoneEvent), best: bestNodeId(d.best) }, endedAt: base.endedAt ?? a.at };
         case "pr":
           return d.url ? { ...base, prUrl: String(d.url) } : base;
         case "error": {
