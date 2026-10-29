@@ -9,8 +9,11 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Values already in the environment win over .logs/dev.env (e.g. against docker compose).
+_secret="${AGENT_SHARED_SECRET:-}"; _backend="${BACKEND_URL:-}"
 [ -f "$ROOT/.logs/dev.env" ] && . "$ROOT/.logs/dev.env"
-BACKEND_URL="${BACKEND_URL:-http://localhost:8080}"
+[ -n "$_secret" ] && AGENT_SHARED_SECRET="$_secret"
+BACKEND_URL="${_backend:-http://localhost:8080}"
 AGENT_URL="${AGENT_URL:-http://localhost:8001}"
 : "${AGENT_SHARED_SECRET:?AGENT_SHARED_SECRET is not set (run scripts/dev-up.sh first)}"
 HARD_BUG="${E2E_HARD_BUG:-version_sort}"
@@ -47,11 +50,16 @@ echo "PatchLoop e2e against $BACKEND_URL (agent $AGENT_URL)"
 
 # ------------------------------------------------------------------ health
 req "backend GET /health" 200 "$WORK/h.json" "$BACKEND_URL/health"
-req "agent GET /health (internal)" 200 "$WORK/ah.json" "$AGENT_URL/health"
-AGENT_MODE="$(json "$WORK/ah.json" 'd["mode"]')"
-rec "agent mode" "$([ -n "$AGENT_MODE" ] && echo PASS || echo FAIL)" "mode=$AGENT_MODE engine=$(json "$WORK/ah.json" 'd["engine"]') guard=$(json "$WORK/ah.json" 'd["guard_backend"]')"
-code="$(C -o /dev/null -w '%{http_code}' "$AGENT_URL/bugs")"
-ok "agent rejects calls without X-Agent-Secret" "$([ "$code" = 401 ] && echo 1)" "HTTP $code"
+AGENT_DIRECT=1
+if [ "$(C -o "$WORK/ah.json" -w '%{http_code}' "$AGENT_URL/health")" = 200 ]; then
+  AGENT_MODE="$(json "$WORK/ah.json" 'd["mode"]')"
+  rec "agent GET /health (internal, direct)" PASS "mode=$AGENT_MODE engine=$(json "$WORK/ah.json" 'd["engine"]') guard=$(json "$WORK/ah.json" 'd["guard_backend"]')"
+  code="$(C -o /dev/null -w '%{http_code}' "$AGENT_URL/bugs")"
+  ok "agent rejects calls without X-Agent-Secret" "$([ "$code" = 401 ] && echo 1)" "HTTP $code"
+else
+  AGENT_DIRECT=0
+  rec "agent GET /health (internal, direct)" SKIP "$AGENT_URL not reachable from here (internal only, e.g. compose): relay overhead not measured"
+fi
 
 # ------------------------------------------------------------------ auth
 EMAIL="e2e-$(date +%s)-$$@example.com"
@@ -85,9 +93,10 @@ RUN_ID="$(json "$WORK/run.json" 'd["runId"]')"
 ok "create run returns {runId,mode,engine=graph}" "$([ -n "$RUN_ID" ] && [ "$(json "$WORK/run.json" 'd["engine"]')" = graph ] && [ -n "$(json "$WORK/run.json" 'd["mode"]')" ] && echo 1)" "mode=$(json "$WORK/run.json" 'd["mode"]')"
 C "${cj[@]}" -o "$WORK/run0.json" "$BACKEND_URL/api/runs/$RUN_ID"
 AGENT_RUN="$(json "$WORK/run0.json" 'd["agentRunId"]')"
+AGENT_ARGS=()
+[ "$AGENT_DIRECT" = 1 ] && AGENT_ARGS=(--agent-events "$AGENT_URL/runs/$AGENT_RUN/events" --agent-secret "$AGENT_SHARED_SECRET")
 python3 "$ROOT/scripts/e2e/sse_probe.py" --prefix "hard run SSE" --t0 "$T0" \
-  --backend-events "$BACKEND_URL/api/runs/$RUN_ID/events" --cookie-jar "$JAR" \
-  --agent-events "$AGENT_URL/runs/$AGENT_RUN/events" --agent-secret "$AGENT_SHARED_SECRET" >"$WORK/probe.tsv"
+  --backend-events "$BACKEND_URL/api/runs/$RUN_ID/events" --cookie-jar "$JAR" "${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"}" >"$WORK/probe.tsv"
 grep -v '^METRIC' "$WORK/probe.tsv" >>"$RESULTS"
 grep '^METRIC' "$WORK/probe.tsv" | cut -f2- >>"$METRICS"
 
