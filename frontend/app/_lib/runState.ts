@@ -48,8 +48,6 @@ export type RunState = {
   locate: LocateEvent | null;
   repro: ReproEvent | null;
   pr: PrEvent | null;
-  /** from an optional "slack" event; null = unknown */
-  slackSent: boolean | null;
   errors: { stage?: string; message: string }[];
   blocked: boolean;
   tokens: number;
@@ -79,7 +77,6 @@ export const initialRunState: RunState = {
   locate: null,
   repro: null,
   pr: null,
-  slackSent: null,
   errors: [],
   blocked: false,
   tokens: 0,
@@ -234,8 +231,6 @@ export function runReducer(s: RunState, a: RunAction): RunState {
           return { ...base, locate: { files: Array.isArray(d.files) ? (d.files as LocateEvent["files"]) : [] } };
         case "repro":
           return { ...base, repro: d as unknown as ReproEvent };
-        case "slack":
-          return { ...base, slackSent: d.sent !== false };
         case "pr":
           return d.url ? { ...base, prUrl: String(d.url), pr: d as unknown as PrEvent } : base;
         case "error": {

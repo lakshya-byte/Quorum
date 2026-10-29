@@ -142,7 +142,7 @@ function GithubCard() {
 
 const SLACK_EXAMPLES = [
   { label: "Link your account", text: "/patchloop link {CODE}" },
-  { label: "Start a fix", text: "/patchloop fix reserve() rejects the last unit repo:demo/inventory-api" },
+  { label: "Start a fix", text: "/patchloop fix percentage coupons also discount shipping repo:demo/shop-api" },
   { label: "Paste an alert", text: "@PatchLoop <paste the error or alert text>" },
 ];
 

@@ -10,9 +10,9 @@ import { Badge, Button, Card, EmptyState, ErrorNote, Field, Icon, Input, LinkBut
 const STEPS = ["Repository", "Describe the problem", "Review and start"];
 
 const EXAMPLES = [
-  "Reserving the last unit of an item fails with 'out of stock'.",
-  "Invoice totals lose their cents: 19.99 + tax comes out as 24.",
-  "word_count returns the wrong number when words are separated by more than one space.",
+  "Checkout totals are wrong when a percentage coupon is used: the discount also reduces shipping and rounds down.",
+  "Word counts are wrong: 'The' and 'the' are counted separately and contractions like don't are split in two.",
+  "Back-to-back bookings are rejected as conflicts: booking 10-11 right after 9-10 raises ConflictError.",
 ];
 
 function ago(iso: string) {

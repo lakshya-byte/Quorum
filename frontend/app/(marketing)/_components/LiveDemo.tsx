@@ -54,7 +54,7 @@ export default function LiveDemo() {
           <span className="h-2.5 w-2.5 rounded-full bg-border-strong" />
         </span>
         <span className="ml-2 truncate font-mono text-[12px] text-on-surface-variant">
-          demo/inventory-api · reserving the last unit fails
+          demo/shop-api · percentage coupons also discount shipping
         </span>
         <span className="ml-auto flex items-center gap-2">
           <Badge tone="warning">scripted replay</Badge>
@@ -91,7 +91,7 @@ export default function LiveDemo() {
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="text-[14px] font-semibold text-white">{ready ? "Pull request #42 ready for review" : "Opening pull request"}</div>
-                    <div className="truncate font-mono text-[12px] text-on-surface-variant">patchloop/reserve-last-unit</div>
+                    <div className="truncate font-mono text-[12px] text-on-surface-variant">patchloop/fix-coupon-totals</div>
                   </div>
                   <span className="rounded-md border border-border-strong px-2.5 py-1.5 text-[12px] font-semibold text-on-surface">Merge: you</span>
                 </div>

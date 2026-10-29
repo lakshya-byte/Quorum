@@ -151,16 +151,16 @@ function Terminal() {
         <span className="h-2 w-2 rounded-full bg-border-strong" />
       </div>
       <pre className="overflow-x-auto p-3.5 [font-variant-ligatures:none]">
-        <span className="text-primary">$</span> <span className="text-white">patchloop fix --repo demo/inventory-api \</span>
-        {"\n"}    <span className="text-white">&quot;reserving the last unit fails&quot;</span>
+        <span className="text-primary">$</span> <span className="text-white">patchloop fix --repo demo/shop-api \</span>
+        {"\n"}    <span className="text-white">&quot;percentage coupons also discount shipping&quot;</span>
         {"\n"}
         {"\n"}
-        <span className="text-secondary">repo</span>    3 files · Python{"\n"}
-        <span className="text-secondary">locate</span>  inventory/stock.py, api.py{"\n"}
-        <span className="text-secondary">repro</span>   test_reserve_last_unit fails ✓{"\n"}
+        <span className="text-secondary">repo</span>    7 files · python{"\n"}
+        <span className="text-secondary">locate</span>  shop/cart.py, coupons.py{"\n"}
+        <span className="text-secondary">repro</span>   test_coupon_total_rounds_the_discount… fails ✓{"\n"}
         <span className="text-secondary">round 1</span> #1 2/3  #2 2/3  #3 blocked{"\n"}
         <span className="text-secondary">round 2</span> #4 <span className="text-primary">3/3 winner</span>{"\n"}
-        <span className="text-secondary">pr</span>      <span className="text-white">patchloop/reserve-last-unit</span>
+        <span className="text-secondary">pr</span>      <span className="text-white">patchloop/fix-coupon-totals</span>
       </pre>
     </div>
   );
@@ -175,9 +175,9 @@ function SlackMock() {
         <span className="rounded bg-surface-container-high px-1 text-[10px] text-on-surface-variant">APP</span>
       </div>
       <p className="mt-2 text-on-surface">
-        <b className="text-white">Fixed:</b> reserving the last unit now works. Reproducer and suite pass (3/3), security scan clean.
+        <b className="text-white">Fixed:</b> coupon totals now round half up and keep shipping at full price. Reproducer and suite pass (3/3), security scan clean.
       </p>
-      <p className="font-mono text-[11.5px] text-on-surface-variant">demo/inventory-api · PR #42</p>
+      <p className="font-mono text-[11.5px] text-on-surface-variant">demo/shop-api · PR #42</p>
       <div className="mt-2.5 flex flex-wrap gap-2" aria-hidden>
         <span className="rounded border border-border-strong px-2.5 py-1 text-[12px] font-medium text-white">Review</span>
         <span className="rounded border border-primary/60 bg-primary/10 px-2.5 py-1 text-[12px] font-medium text-primary">Merge</span>
@@ -192,7 +192,7 @@ function GithubMock() {
     <div className="rounded-lg border border-border bg-[#05070a] p-3.5 text-[12.5px] leading-5">
       <div className="flex items-center gap-2">
         <Icon name="github" size={15} className="text-on-surface-variant" />
-        <span className="font-medium text-white">Last unit can&apos;t be reserved</span>
+        <span className="font-medium text-white">Coupon totals are wrong</span>
         <span className="text-text-subtle">#17</span>
       </div>
       <div className="mt-2 flex flex-wrap gap-1.5" aria-hidden>
@@ -210,9 +210,9 @@ function WebMock() {
   return (
     <div className="rounded-lg border border-border bg-[#05070a] p-3.5 text-[12.5px]">
       <div className="flex items-center gap-2 font-mono text-on-surface-variant">
-        <Icon name="github" size={14} /> demo/inventory-api <Icon name="git-branch" size={13} /> main
+        <Icon name="github" size={14} /> demo/shop-api <Icon name="git-branch" size={13} /> main
       </div>
-      <div className="mt-2.5 rounded-md border border-border-strong bg-surface-container-low px-2.5 py-2 text-on-surface">Reserving the last unit of an item fails with &quot;out of stock&quot;.</div>
+      <div className="mt-2.5 rounded-md border border-border-strong bg-surface-container-low px-2.5 py-2 text-on-surface">Checkout totals are wrong when a percentage coupon is used.</div>
       <div className="mt-2.5 flex flex-wrap gap-1.5" aria-hidden>
         {["Repo", "Locate", "Repro", "Propose", "Test", "Critic"].map((s, i) => (
           <span key={s} className={`rounded px-1.5 py-0.5 text-[11px] ${i < 5 ? "bg-primary/15 text-primary" : "bg-secondary/15 text-secondary"}`}>
@@ -262,7 +262,7 @@ export function EntryPoints() {
 
 const TRUST: { icon: IconName; title: string; body: string }[] = [
   { icon: "flask", title: "Tests are the judge", body: "A fix counts only if the new reproducer and your existing suite pass. The AI does not grade itself." },
-  { icon: "box", title: "Sandboxed candidates", body: "Each candidate runs in an isolated sandbox, never on your machine or your CI." },
+  { icon: "box", title: "Sandboxed candidates", body: "In live mode each candidate runs in an isolated Nebius sandbox, not on your machine or your CI. Demo mode runs bundled repos in a local temp directory." },
   { icon: "git-pr", title: "Pull requests only", body: "Branches are always patchloop/…. The code refuses anything else, and never writes to your default branch." },
   { icon: "user", title: "A human merges", body: "The agent service has no merge function. Merge is a button you press, under your own GitHub permission." },
   { icon: "shield-check", title: "Policy and security gates", body: "Patches can't touch CI files or tests, and a security scan flags new findings before anything is proposed." },

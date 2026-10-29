@@ -17,6 +17,7 @@ function RunInner({ id }: { id: string }) {
   const [run, setRun] = useState<Run | null>(null);
   const [bug, setBug] = useState<Bug | null>(null);
   const [slack, setSlack] = useState<boolean | null>(null);
+  const [slackSent, setSlackSent] = useState<boolean | null>(null);
   const [error, setError] = useState<{ status: number; message: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -56,6 +57,22 @@ function RunInner({ id }: { id: string }) {
     withCredentials: true,
     snapshot: run && finished ? run : null,
   });
+  // The backend marks run.slackSent a moment after the run finished: look again, without touching the live view.
+  const streamDone = state.status === "finished";
+  useEffect(() => {
+    if (!streamDone) return;
+    let cancelled = false;
+    const look = () =>
+      runsApi
+        .get(id)
+        .then((r) => !cancelled && setSlackSent(!!r.slackSent))
+        .catch(() => {});
+    const timers = [setTimeout(look, 600), setTimeout(look, 2500), setTimeout(look, 6000)];
+    return () => {
+      cancelled = true;
+      timers.forEach(clearTimeout);
+    };
+  }, [streamDone, id]);
   const onOpened = useCallback((url: string) => dispatch({ kind: "pr", url }), [dispatch]);
 
   if (error) {
@@ -99,6 +116,7 @@ function RunInner({ id }: { id: string }) {
         notice={notice}
         onRetry={retry}
         slackConfigured={slack}
+        slackSent={slackSent ?? (run.slackSent ? true : null)}
         solvedActions={
           isRepo ? null : (
             <>

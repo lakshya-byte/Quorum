@@ -197,7 +197,7 @@ push to main: a human reviews and merges the pull request.
 (`409` when GitHub is not connected, `429` after 10 tasks per hour). The run
 is then read like any other run (`GET /api/runs/:id`, `/events`). Run objects
 carry `kind` (`bug` or `repo`), `repo`, `branch`, `task`, `source`, `prNumber`,
-`prBranch`, `filesChanged`, `merged`, `cost`, `safety`, `traceId`.
+`prBranch`, `filesChanged` (a number), `bestPassed`/`bestTotal`, `merged`, `cost`, `safety` (`{guard:{input,output}, policy:{best_ok,blocked,candidates,reasons}, security:{best_ok,blocked,scanned,scanner}}`), `slackSent` (true once the completion message went to Slack), `traceId`.
 
 Repo runs add these events before `guard`, `triage`, `round`, `node`, `critic`
 and `done`:
@@ -226,7 +226,7 @@ and `done`:
 | `GET` / `PUT` / `DELETE` | `/api/settings/slack` | `{ configured, webhookUrlMasked }`; `PUT` body `{ webhookUrl }` must start with `https://hooks.slack.com/` |
 | `POST` | `/api/settings/slack/test` | sends a test message |
 | `POST` | `/api/slack/link-code` | `{ code, expiresAt }`, for `/patchloop link CODE` in Slack |
-| `GET` | `/api/notifications` | list; `POST /api/notifications/:id/read` marks one read |
+| `GET` | `/api/notifications` | `{notifications:[{id,kind,title,body,runId,read,createdAt}], unread}`; `POST /api/notifications/:id/read` marks one read. Kinds: `pr_opened`, `pr_updated`, `merged`, `failed` |
 
 Slack commands and GitHub issue triggers need the Slack app and the GitHub App
 to be set up by the operator of the server.

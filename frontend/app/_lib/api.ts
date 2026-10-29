@@ -31,6 +31,23 @@ export type RunNode = {
   diff?: string;
 };
 
+/** What the agent reports in the completion callback (see agent/app/runs.py safety_summary). */
+export type RunSafety = {
+  guard?: { input?: string; output?: string } | string;
+  policy?: { best_ok?: boolean; blocked?: number; candidates?: number; reasons?: string[] } | string;
+  security?: { best_ok?: boolean; blocked?: number; scanned?: boolean; scanner?: string } | string;
+};
+
+/** Collapse RunSafety into three words for the history table: pass | fail | n/a. */
+export function safetySummary(s: RunSafety | null | undefined): { guard: string; policy: string; security: string; allPass: boolean } | null {
+  if (!s) return null;
+  const guard =
+    typeof s.guard === "string" ? s.guard : s.guard ? (Object.values(s.guard).every((v) => v === "pass") ? "pass" : "fail") : "n/a";
+  const policy = typeof s.policy === "string" ? s.policy : s.policy ? (s.policy.best_ok === false ? "fail" : "pass") : "n/a";
+  const security = typeof s.security === "string" ? s.security : s.security ? (s.security.best_ok === false ? "fail" : "pass") : "n/a";
+  return { guard, policy, security, allPass: [guard, policy, security].every((v) => v === "pass") };
+}
+
 export type Run = {
   id: string;
   userId: string;
@@ -58,7 +75,12 @@ export type Run = {
   prBranch?: string | null;
   merged?: { by?: string; at?: string } | null;
   cost?: { tokens?: number; usd?: number | null } | null;
-  safety?: { policy?: string; security?: string; guard?: string } | null;
+  safety?: RunSafety | null;
+  /** true once the completion message went to Slack (set by the backend, shortly after the run finishes) */
+  slackSent?: boolean;
+  /** tests passed by the best candidate (present even where the list omits nodes) */
+  bestPassed?: number;
+  bestTotal?: number;
   traceId?: string | null;
   langsmithUrl?: string | null;
 };
@@ -224,7 +246,12 @@ export const prApi = {
 };
 
 export const notificationsApi = {
-  list: () => api<Notification[] | null>("/api/notifications"),
+  // The backend answers {notifications, unread}; a bare array (older mock) is accepted too.
+  list: async (): Promise<Notification[]> => {
+    const r = await api<{ notifications?: Notification[] | null } | Notification[] | null>("/api/notifications");
+    if (Array.isArray(r)) return r;
+    return r?.notifications || [];
+  },
   read: (id: string) => api<unknown>(`/api/notifications/${encodeURIComponent(id)}/read`, { method: "POST" }),
 };
 

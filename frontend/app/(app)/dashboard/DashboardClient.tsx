@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { errorMessage, githubApi, runsApi, slackApi, type Bug, type GithubStatus, type Run, type SlackStatus } from "../../_lib/api";
+import { errorMessage, githubApi, runsApi, safetySummary, slackApi, type Bug, type GithubStatus, type Run, type SlackStatus } from "../../_lib/api";
 import { RequireAuth, useAuth } from "../../_lib/auth";
 import { isFinishedRun } from "../../_lib/useRunStream";
 import { fmtMs } from "../../_components/run/NodeCard";
@@ -16,6 +16,7 @@ function statusOf(r: Run): RunStatus {
 }
 
 function bestTests(r: Run): string {
+  if (r.bestTotal) return `${r.bestPassed ?? 0}/${r.bestTotal}`;
   const nodes = r.nodes || [];
   const best = r.bestNodeId != null ? nodes.find((n) => n.id === r.bestNodeId) : undefined;
   const pick = best ?? [...nodes].sort((a, b) => b.passed / (b.total || 1) - a.passed / (a.total || 1))[0];
@@ -210,10 +211,10 @@ function DashboardInner() {
                       <td className="px-4 py-3 font-mono text-[12.5px] text-on-surface-variant" title="Tokens used">{tokens(r)} tok</td>
                       <td className="px-4 py-3 font-mono text-[12.5px] text-on-surface-variant">{fmtMs(r.latencyMs)}</td>
                       <td className="px-4 py-3">
-                        {r.safety ? (
-                          <span title={`policy ${r.safety.policy}, security ${r.safety.security}, guard ${r.safety.guard}`}>
-                            <Badge tone={Object.values(r.safety).every((v) => v === "pass") ? "success" : "warning"} icon="shield-check">
-                              {Object.values(r.safety).every((v) => v === "pass") ? "all pass" : "flagged"}
+                        {safetySummary(r.safety) ? (
+                          <span title={`policy ${safetySummary(r.safety)!.policy}, security ${safetySummary(r.safety)!.security}, guard ${safetySummary(r.safety)!.guard}`}>
+                            <Badge tone={safetySummary(r.safety)!.allPass ? "success" : "warning"} icon="shield-check">
+                              {safetySummary(r.safety)!.allPass ? "all pass" : "flagged"}
                             </Badge>
                           </span>
                         ) : (
