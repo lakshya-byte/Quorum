@@ -160,7 +160,7 @@ func (a *Agent) createRun(w http.ResponseWriter, r *http.Request) {
 	}
 	engine := body.Engine
 	if engine == "" {
-		engine = "loop"
+		engine = "graph"
 	}
 	id := newID()
 	a.mu.Lock()

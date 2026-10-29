@@ -115,7 +115,7 @@ func (s *RunService) CreateRun(ctx context.Context, in CreateRunInput) (*models.
 		engine = in.Engine
 	}
 	if engine == "" {
-		engine = "loop"
+		engine = "graph" // the agent's default engine (CONTRACT)
 	}
 	if err := s.runs.SetAgentRun(ctx, run.ID, resp.RunID, resp.Mode, engine); err != nil {
 		return nil, err
