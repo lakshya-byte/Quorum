@@ -1,7 +1,20 @@
 # CLI
 
-The `patchloop` command line tool starts fixes from your terminal. It talks to
-the same backend API as the web app and authenticates with an API token.
+The `patchloop` command line tool starts fixes from your terminal and draws the
+agents' search tree live. It talks to the same backend API as the web app and
+authenticates with an API token. The tests decide which fix wins; the CLI (like
+every agent) can never merge. `patchloop pr` opens a pull request for a human.
+
+## Install
+
+Go 1.27+:
+
+```bash
+cd cli
+go install ./cmd/patchloop        # puts `patchloop` in $(go env GOPATH)/bin
+# or
+go build -o patchloop ./cmd/patchloop
+```
 
 ## 1. Create a token
 
@@ -12,23 +25,59 @@ give the token a name and create it. The token starts with `plk_` and is shown
 ## 2. Sign the CLI in
 
 ```bash
-patchloop login --token plk_...
+patchloop login --token plk_... --api http://localhost:8080
+patchloop whoami
 ```
+
+The token is checked against `/api/auth/me` and saved to
+`~/.config/patchloop/config.json` (mode 0600; `$XDG_CONFIG_HOME` is honoured,
+`PATCHLOOP_CONFIG` overrides the path). `--api` or `PATCHLOOP_API` override the
+saved backend URL for one command.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `patchloop login --token plk_... [--api URL]` | verify and save a token |
+| `patchloop whoami` | show the account behind the token |
+| `patchloop bugs` | list bugs |
+| `patchloop fix <bug-id> [--engine graph\|loop] [--replay] [--json]` | start a run and stream it; exit 0 if solved, 1 if not |
+| `patchloop runs` | your recent runs |
+| `patchloop watch <run-id> [--json]` | stream an existing run (replays past events first) |
+| `patchloop pr <run-id>` | open a GitHub PR with the winning fix, prints its URL |
 
 ## 3. Fix a bug
 
 ```bash
-patchloop fix paginate
+patchloop bugs
+patchloop fix version_sort --engine graph
+echo $?    # 0 = solved, 1 = not solved
 ```
 
-The argument is a bug id from `GET /api/bugs` (for example `paginate`,
-`slugify`, `cart`, `average`). A solved run page in the web app has a
+The argument is a bug id from `patchloop bugs` (easy: `paginate`, `slugify`,
+`cart`, `average`; hard: `money_total`, `version_sort`, `merge_intervals`,
+`lru_cache`, `slugify_unicode`). A solved run page in the web app has a
 **Copy CLI command** button with the right id.
 
+Nodes are indented by depth and coloured by tests passed (green = all, amber =
+some, red = none). Colour is off when `NO_COLOR` is set, `TERM=dumb`, or output
+is not a terminal.
+
+`--json` prints each raw event (`{"type":...,"data":{...}}`) on its own line:
+
+```bash
+patchloop fix cart --json | jq -c 'select(.type=="node") | .data.passed'
+```
+
+**Ctrl-C** closes the stream only (exit 130); the run keeps going on the
+server. Resume with `patchloop watch <run-id>`.
+
 The run is the same one you would start from the dashboard: the agent team
-proposes fixes in isolated Nebius Sandboxes, the tests decide, guardrails and
-the policy gate check every step, and a solved run can open a pull request for
-a human to review and merge. The CLI never merges anything.
+proposes fixes in isolated sandboxes (Nebius Sandboxes in live mode), the tests
+decide, guardrails and the policy gate check every step, and a solved run can
+open a pull request for a human to review and merge. The CLI never merges
+anything. `patchloop pr` needs `GITHUB_TOKEN` and `GITHUB_REPO` on the agent;
+without them it prints the error from the server.
 
 ## Using the API directly
 
@@ -39,7 +88,7 @@ token in an `Authorization` header:
 curl -X POST http://localhost:8080/api/runs \
   -H "Authorization: Bearer plk_..." \
   -H "Content-Type: application/json" \
-  -d '{"bugId":"paginate"}'
+  -d '{"bugId":"paginate","engine":"graph"}'
 
 curl -N http://localhost:8080/api/runs/RUN_ID/events \
   -H "Authorization: Bearer plk_..."
