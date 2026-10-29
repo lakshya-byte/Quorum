@@ -160,12 +160,12 @@ emitted are replayed first, so a client can connect late or reconnect.
 | `type` | `data` |
 | --- | --- |
 | `run_started` | `{ run_id, bug_id, mode, engine }` |
-| `guard` | `{ stage, verdict, reasons, latency_ms }` with `stage` one of `input`, `policy`, `output` and `verdict` one of `pass`, `block` |
+| `guard` | `{ stage, verdict, reasons, latency_ms }` with `stage` one of `input`, `output` (the policy gate result is on each `node.policy`) and `verdict` one of `pass`, `block` |
 | `triage` | `{ cause, strategies }` |
 | `round` | `{ depth }` |
 | `node` | `{ id, parent, depth, idea, strategy, code, output, passed, total, score, model, latency_ms, tokens, policy: { ok, reasons }, security: { ok, new_findings } }` |
 | `critic` | `{ node_id, lesson }` |
-| `done` | `{ solved, best, usage: { prompt_tokens, completion_tokens }, latency_ms, time_to_first_node_ms }` |
+| `done` | `{ solved, best, usage: { prompt_tokens, completion_tokens }, latency_ms, time_to_first_node_ms }`; `best` is the best node object (or `null`) |
 | `pr` | `{ url }` |
 | `error` | `{ stage, message }` |
 | `end` | always last; close the stream |
