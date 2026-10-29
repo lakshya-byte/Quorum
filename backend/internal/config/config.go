@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -22,11 +23,40 @@ type Config struct {
 	OTPTTLMin         int
 	CookieSecure      bool
 	CookieDomain      string
+
+	// Agent service (internal only).
+	AgentURL          string
+	AgentSharedSecret string
+
+	// Notifications and links.
+	SlackWebhookURL string
+	PublicAppURL    string
+
+	// Limits.
+	LiveRunsPerUserPerDay int
+	GuestRunsPerHour      int
+	TrustedProxies        []string
+
+	// Observability (both optional; New Relic is a no-op when the key is unset).
+	NewRelicLicenseKey string
+	NewRelicAppName    string
+
+	// DevMode enables test-only helpers (stored OTPs readable via
+	// /internal/dev/otp). Never enabled unless DEV_MODE=true.
+	DevMode bool
 }
 
 func Load() *Config {
 	if err := godotenv.Load(); err != nil {
 		log.Println("no .env file found, relying on process environment")
+	}
+
+	devMode := getEnv("DEV_MODE", "false") == "true"
+	frontendOrigin := getEnv("FRONTEND_ORIGIN", "http://localhost:3000")
+
+	resendKey := os.Getenv("RESEND_API_KEY")
+	if resendKey == "" && !devMode {
+		log.Fatalf("missing required environment variable: RESEND_API_KEY")
 	}
 
 	cfg := &Config{
@@ -37,12 +67,27 @@ func Load() *Config {
 		JWTRefreshSecret:  mustGetEnv("JWT_REFRESH_SECRET"),
 		JWTAccessTTLMin:   getEnvInt("JWT_ACCESS_TTL_MIN", 15),
 		JWTRefreshTTLDays: getEnvInt("JWT_REFRESH_TTL_DAYS", 30),
-		ResendAPIKey:      mustGetEnv("RESEND_API_KEY"),
+		ResendAPIKey:      resendKey,
 		ResendFromEmail:   getEnv("RESEND_FROM_EMAIL", "noreply@patchloop.dev"),
-		FrontendOrigin:    getEnv("FRONTEND_ORIGIN", "http://localhost:3000"),
+		FrontendOrigin:    frontendOrigin,
 		OTPTTLMin:         getEnvInt("OTP_TTL_MIN", 10),
 		CookieSecure:      getEnv("COOKIE_SECURE", "false") == "true",
 		CookieDomain:      getEnv("COOKIE_DOMAIN", "localhost"),
+
+		AgentURL:          strings.TrimRight(getEnv("AGENT_URL", "http://localhost:8001"), "/"),
+		AgentSharedSecret: mustGetEnv("AGENT_SHARED_SECRET"),
+
+		SlackWebhookURL: os.Getenv("SLACK_WEBHOOK_URL"),
+		PublicAppURL:    strings.TrimRight(getEnv("PUBLIC_APP_URL", frontendOrigin), "/"),
+
+		LiveRunsPerUserPerDay: getEnvInt("LIVE_RUNS_PER_USER_PER_DAY", 10),
+		GuestRunsPerHour:      getEnvInt("GUEST_RUNS_PER_HOUR", 3),
+		TrustedProxies:        splitList(os.Getenv("TRUSTED_PROXIES")),
+
+		NewRelicLicenseKey: os.Getenv("NEW_RELIC_LICENSE_KEY"),
+		NewRelicAppName:    getEnv("NEW_RELIC_APP_NAME", "patchloop-backend"),
+
+		DevMode: devMode,
 	}
 
 	return cfg
@@ -73,4 +118,14 @@ func getEnvInt(key string, fallback int) int {
 		log.Fatalf("invalid integer environment variable %s: %v", key, err)
 	}
 	return i
+}
+
+func splitList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
