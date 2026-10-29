@@ -1,14 +1,16 @@
 # Backend
 
-`patchloop-backend` is a monolithic Go service: Gin for HTTP, MongoDB for
-persistence, JWT for sessions. It currently implements one feature —
-email/password authentication with OTP email verification — structured so
-more features slot into the same layout later.
+The backend (`backend/` in the monorepo) is a monolithic Go service: Gin for HTTP, MongoDB for
+persistence, JWT for sessions. It owns
+email/password authentication with OTP email verification, runs, API tokens,
+the guest demo and pull requests, and relays the agent service's event stream
+to the browser unchanged. The full public API is in the
+[API reference](/docs/api-reference); this page describes the auth core.
 
 ## Project layout
 
 ```
-patchloop-backend/
+backend/
   cmd/api/main.go              # entrypoint: load config, connect Mongo, build router, serve
   internal/
     config/       # env var loading
@@ -84,11 +86,10 @@ Both tokens are set as `HttpOnly` cookies with `SameSite=Lax`:
 | `COOKIE_SECURE` | `false` | set `true` behind HTTPS |
 | `COOKIE_DOMAIN` | `localhost` | cookie `Domain` attribute |
 
-See `.env.example` in `patchloop-backend/` for a ready-to-copy template.
+See `.env.example` in `backend/` for a ready-to-copy template.
 
 ## Out of scope (for now)
 
-The frontend's sign-in page has Password / Magic Link / Passkey tabs and
-GitHub/Google/SAML buttons — only the password flow has a real backend
-today. Magic link, passkey/WebAuthn, OAuth, and password reset are not yet
-implemented.
+Sign-in is email + password with OTP verification. Magic link,
+passkey/WebAuthn, OAuth and password reset are not implemented, and the
+frontend does not offer them.

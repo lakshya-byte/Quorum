@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef } from "react";
+import Link from "next/link";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
@@ -40,110 +41,111 @@ export default function ArchitectureBento() {
         <div>
           <div className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-secondary">
             <span className="material-symbols-outlined text-[15px]">architecture</span>
-            ENGINEERED FOR HERMETIC PRECISION
+            HOW PATCHLOOP WORKS
           </div>
           <h2 className="mt-2 text-2xl lg:text-3xl text-white font-semibold tracking-tight">
-            Full-Stack Autonomous Prover Architecture
+            Agents propose. Tests decide. Humans merge.
           </h2>
         </div>
         <p className="text-[14px] text-on-surface-variant max-w-md">
-          PatchLoop replaces conversational guessing with branch-bounded symbolic
-          synthesis and sub-millisecond Firecracker hypervisor isolation.
+          Three services: a Next.js frontend, a Go API that owns auth, runs and pull
+          requests, and an internal Python agent service that drives the LangGraph
+          agent team and the sandboxes.
         </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {/* Card 1: Micro-VM isolation (wide) */}
+        {/* Card 1: sandboxes (wide) */}
         <div className="bento-card lg:col-span-2 rounded-xl bg-surface-container-low border border-outline-variant/60 p-6 flex flex-col justify-between shadow-lg relative overflow-hidden group">
           <div className="absolute top-0 right-0 w-80 h-80 bg-primary/5 rounded-full blur-3xl pointer-events-none" />
           <div>
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-4 gap-2">
               <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-surface-container-high text-primary border border-primary/20">
-                FIRECRACKER HYPERVISOR BOUNDARY
+                NEBIUS SANDBOXES
               </span>
-              <span className="font-mono text-[11px] text-secondary">sub-15ms jail</span>
+              <span className="font-mono text-[11px] text-secondary">one sandbox per attempt</span>
             </div>
-            <h3 className="text-xl text-white font-medium">
-              Ephemeral Micro-VM Memory Isolation
-            </h3>
+            <h3 className="text-xl text-white font-medium">Parallel fixes, isolated from each other</h3>
             <p className="mt-1 text-on-surface-variant text-[13px] max-w-xl">
-              Each patch candidate is executed within an isolated, hardware-virtualized
-              guest kernel. Memory state is snapshot-restored instantly with
-              copy-on-write integrity.
+              Each candidate fix is written into its own isolated Nebius Sandbox together
+              with the bug&apos;s tests, and run there. A broken or hostile attempt only
+              affects its own sandbox; the search keeps going.
             </p>
 
             <div className="mt-6 p-4 rounded-lg bg-[#07090e] border border-outline-variant/50 flex flex-col gap-3 font-mono text-[11px]">
-              <div className="flex items-center justify-between text-outline text-[10px]">
-                <span>HOST PERIMETER (KVM / /dev/net/tun DISABLED)</span>
-                <span className="text-primary font-medium">JAILED GUEST</span>
+              <div className="flex items-center justify-between text-outline text-[10px] gap-2">
+                <span>ROUND 1 · 3 PROPOSERS IN PARALLEL</span>
+                <span className="text-primary font-medium">TESTS SCORE EACH ONE</span>
               </div>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="p-3 rounded bg-surface-container-high/60 border border-outline-variant/40 flex flex-col gap-1">
-                  <span className="text-white font-medium text-[11px]">Ring 0: Guest Kernel</span>
-                  <span className="text-on-surface-variant text-[10px]">6.1.42 Hermetic Strip</span>
-                  <span className="text-primary text-[10px]">Init: 3.4ms</span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="p-3 rounded bg-surface-container-high/60 border border-error/30 flex flex-col gap-1">
+                  <span className="text-white font-medium text-[11px]">Sandbox A</span>
+                  <span className="text-on-surface-variant text-[10px]">off-by-one strategy</span>
+                  <span className="text-error text-[10px]">1/6 tests</span>
                 </div>
-                <div className="p-3 rounded bg-surface-container-high/60 border border-outline-variant/40 flex flex-col gap-1">
-                  <span className="text-white font-medium text-[11px]">Ring 3: AST Test Harness</span>
-                  <span className="text-on-surface-variant text-[10px]">Deterministic V8/LLVM</span>
-                  <span className="text-secondary text-[10px]">Cow Heap: 128MB</span>
+                <div className="p-3 rounded bg-surface-container-high/60 border border-amber-400/30 flex flex-col gap-1">
+                  <span className="text-white font-medium text-[11px]">Sandbox B</span>
+                  <span className="text-on-surface-variant text-[10px]">input validation</span>
+                  <span className="text-amber-300 text-[10px]">4/6 tests · kept by critic</span>
                 </div>
                 <div className="p-3 rounded bg-primary/10 border border-primary/30 flex flex-col gap-1">
-                  <span className="text-primary font-medium text-[11px]">Cryptographic Verifier</span>
-                  <span className="text-on-surface-variant text-[10px]">Assertion Matrix</span>
-                  <span className="text-primary text-[10px]">0 Regressions</span>
+                  <span className="text-primary font-medium text-[11px]">Round 2 · from B</span>
+                  <span className="text-on-surface-variant text-[10px]">add the guard clause</span>
+                  <span className="text-primary text-[10px]">6/6 tests · winner</span>
                 </div>
               </div>
-              <div className="flex items-center justify-between pt-2 border-t border-outline-variant/30 text-[10px] text-on-surface-variant">
+              <div className="flex items-center justify-between pt-2 border-t border-outline-variant/30 text-[10px] text-on-surface-variant gap-2">
                 <span className="flex items-center gap-1.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-                  Zero network egress allowed
+                  score = passed / total, smaller diffs win ties
                 </span>
-                <span className="text-white">Seccomp profile: strictly enforced</span>
+                <span className="text-white">up to 3 rounds</span>
               </div>
             </div>
           </div>
           <div className="mt-5 flex items-center justify-between pt-3 border-t border-outline-variant/40 text-on-surface-variant font-mono text-[11px]">
-            <span>Hardware virtualization acceleration</span>
-            <span className="text-primary">100% Hermetic Guarantee →</span>
+            <span>Watch the tree grow live</span>
+            <Link href="/try" className="text-primary hover:underline">
+              Open the demo →
+            </Link>
           </div>
         </div>
 
-        {/* Card 2: Zero hallucinations */}
+        {/* Card 2: tests decide */}
         <div className="bento-card rounded-xl bg-surface-container-low border border-outline-variant/60 p-6 flex flex-col justify-between shadow-lg relative">
           <div>
             <div className="flex items-center justify-between mb-4">
               <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-surface-container-high text-secondary border border-secondary/20">
-                FORMAL PROOF
+                TESTS ARE THE JUDGE
               </span>
               <span className="material-symbols-outlined text-secondary text-[20px]">fact_check</span>
             </div>
-            <h3 className="text-xl text-white font-medium">Zero Hallucinations</h3>
+            <h3 className="text-xl text-white font-medium">The model never grades itself</h3>
             <p className="mt-1 text-on-surface-variant text-[13px]">
-              Speculative suggestions are banned. An AST invariant solver checks boundary
-              types before the patch reaches CI.
+              A fix counts as solved only when every test passes in the sandbox. The
+              model&apos;s opinion of its own patch is not part of the score.
             </p>
 
             <div className="mt-5 p-3 rounded-lg bg-[#07090e] border border-outline-variant/50 space-y-2 font-mono text-[10px]">
               {[
-                { label: "Type Invariance Check", value: "PASSED (100%)", bar: "bg-primary" },
-                { label: "Null Pointer Safety Proof", value: "VERIFIED (100%)", bar: "bg-primary" },
-                { label: "Non-Destructive AST Edit", value: "SEALED (100%)", bar: "bg-secondary" },
+                { label: "Original code (#0)", value: "1/6", w: "w-1/6", bar: "bg-error" },
+                { label: "Best of round 1 (#2)", value: "4/6", w: "w-4/6", bar: "bg-amber-400" },
+                { label: "Winner (#5)", value: "6/6", w: "w-full", bar: "bg-primary" },
               ].map((row) => (
                 <div key={row.label}>
                   <div className="flex justify-between items-center text-on-surface-variant pt-1 first:pt-0">
                     <span>{row.label}</span>
-                    <span className="text-primary">{row.value}</span>
+                    <span className="text-white">{row.value} tests</span>
                   </div>
                   <div className="w-full h-1.5 bg-surface-container rounded-full overflow-hidden mt-1">
-                    <div className={`h-full ${row.bar} rounded-full w-full`} />
+                    <div className={`h-full ${row.bar} rounded-full ${row.w}`} />
                   </div>
                 </div>
               ))}
             </div>
           </div>
           <div className="mt-4 pt-3 border-t border-outline-variant/40 flex items-center justify-between font-mono text-[11px] text-primary">
-            <span>0 Speculative PRs Generated</span>
+            <span>Unsolved runs propose nothing for merge</span>
             <span className="material-symbols-outlined text-[16px]">verified</span>
           </div>
         </div>
@@ -153,113 +155,107 @@ export default function ArchitectureBento() {
           <div>
             <div className="flex items-center justify-between mb-4">
               <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-surface-container-high text-primary border border-primary/20">
-                INFERENCE FABRIC
+                MODELS
               </span>
-              <span className="font-mono text-[11px] text-primary">1,240 tok/sec</span>
+              <span className="material-symbols-outlined text-primary text-[20px]">neurology</span>
             </div>
-            <h3 className="text-xl text-white font-medium">Nemotron-70B + Nebius</h3>
+            <h3 className="text-xl text-white font-medium">Nemotron via Nebius Token Factory</h3>
             <p className="mt-1 text-on-surface-variant text-[13px]">
-              Ultra-low latency symbolic patch reasoning hosted on Nebius
-              high-throughput Token Factory infrastructure.
+              NVIDIA Nemotron models served by Nebius Token Factory power the agents: a
+              smaller model for the first round, a larger one for deeper rounds.
             </p>
 
-            <div className="mt-5 p-3 rounded-lg bg-[#07090e] border border-outline-variant/50 space-y-2 font-mono text-[11px]">
-              <div className="flex items-center justify-between text-on-surface-variant text-[10px]">
-                <span>INFERENCE WATERFALL</span>
-                <span className="text-secondary">&lt;48ms completion</span>
+            <div className="mt-5 p-3 rounded-lg bg-[#07090e] border border-outline-variant/50 space-y-1.5 font-mono text-[11px] text-on-surface-variant">
+              <div className="flex justify-between gap-2">
+                <span>triage</span>
+                <span className="text-white">cause + 3 strategies</span>
               </div>
-              <div className="flex items-end gap-1 h-9 px-1 pt-1">
-                <div className="w-1/6 bg-secondary/30 h-3 rounded-t" />
-                <div className="w-1/6 bg-secondary/50 h-5 rounded-t" />
-                <div className="w-1/6 bg-primary/70 h-8 rounded-t" />
-                <div className="w-1/6 bg-primary h-9 rounded-t" />
-                <div className="w-1/6 bg-primary/90 h-7 rounded-t" />
-                <div className="w-1/6 bg-secondary/80 h-6 rounded-t" />
+              <div className="flex justify-between gap-2">
+                <span>proposers</span>
+                <span className="text-white">one strategy each</span>
               </div>
-              <div className="flex justify-between text-[10px] text-outline pt-1">
-                <span>Prompt AST (1.2k)</span>
-                <span className="text-white">1,240 tokens/s peak</span>
+              <div className="flex justify-between gap-2">
+                <span>critic</span>
+                <span className="text-white">lessons for the next round</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span>reviewer</span>
+                <span className="text-white">checks the winner</span>
               </div>
             </div>
           </div>
           <div className="mt-4 pt-3 border-t border-outline-variant/40 flex items-center justify-between text-on-surface-variant font-mono text-[11px]">
-            <span>Sub-second generation loop</span>
-            <span className="text-white font-medium">&lt;480ms end-to-end</span>
+            <span>Token usage shown per run</span>
+            <span className="text-white font-medium">LangGraph</span>
           </div>
         </div>
 
-        {/* Card 4: CI/CD bot */}
+        {/* Card 4: guardrails */}
         <div className="bento-card rounded-xl bg-surface-container-low border border-outline-variant/60 p-6 flex flex-col justify-between shadow-lg relative">
           <div>
             <div className="flex items-center justify-between mb-4">
               <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-surface-container-high text-on-surface-variant">
-                SEAMLESS WORKFLOW
+                GUARDRAILS
               </span>
-              <span className="material-symbols-outlined text-[16px] text-on-surface-variant">merge</span>
+              <span className="material-symbols-outlined text-[16px] text-on-surface-variant">shield</span>
             </div>
-            <h3 className="text-xl text-white font-medium">CI/CD Direct Bot</h3>
+            <h3 className="text-xl text-white font-medium">NeMo Guardrails + a policy gate</h3>
             <p className="mt-1 text-on-surface-variant text-[13px]">
-              Native GitHub Actions, GitLab CI, and Buildkite integrations
-              automatically open ready-to-merge PRs.
+              NeMo Guardrails screens what goes in and what comes out. A deterministic
+              policy gate and a security scan check every candidate patch.
             </p>
 
             <div className="mt-5 p-3 rounded-lg bg-[#07090e] border border-outline-variant/50 space-y-2 font-mono text-[11px]">
               <div className="flex items-center gap-2 text-white">
-                <span className="material-symbols-outlined text-primary text-[15px]">check_circle</span>
-                <span className="font-medium truncate">PatchLoop Auto-Verifier / PR #8412</span>
+                <span className="material-symbols-outlined text-error text-[15px]">block</span>
+                <span className="font-medium truncate">#3 blocked: shell access in patch</span>
               </div>
-              <div className="pl-5 text-[10px] text-on-surface-variant flex flex-col gap-0.5">
-                <span>✓ Micro-VM compiled successfully (248ms)</span>
-                <span>✓ Cryptographic proof signature validated</span>
+              <div className="flex items-center gap-2 text-white">
+                <span className="material-symbols-outlined text-amber-300 text-[15px]">gpp_maybe</span>
+                <span className="font-medium truncate">#4 flagged: new eval() finding</span>
+              </div>
+              <div className="flex items-center gap-2 text-white">
+                <span className="material-symbols-outlined text-primary text-[15px]">check_circle</span>
+                <span className="font-medium truncate">#5 clean: policy and scan pass</span>
               </div>
             </div>
           </div>
           <div className="mt-4 pt-3 border-t border-outline-variant/40 flex items-center justify-between font-mono text-[11px] text-secondary">
-            <span>GitHub · GitLab · Buildkite</span>
-            <span>Zero config required</span>
+            <span>input · policy · output</span>
+            <span>shown on every run</span>
           </div>
         </div>
 
-        {/* Card 5: Enterprise assurance (wide) */}
-        <div className="bento-card lg:col-span-2 rounded-xl bg-surface-container-low border border-outline-variant/60 p-6 flex flex-col justify-between shadow-lg relative">
+        {/* Card 5: human merges (wide) */}
+        <div className="bento-card md:col-span-2 lg:col-span-1 rounded-xl bg-surface-container-low border border-outline-variant/60 p-6 flex flex-col justify-between shadow-lg relative">
           <div>
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-4 gap-2">
               <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-surface-container-high text-primary border border-primary/20">
-                ENTERPRISE ASSURANCE
+                HUMAN IN THE LOOP
               </span>
-              <span className="font-mono text-[11px] text-white">SOC2 TYPE II · HIPAA READY</span>
+              <span className="font-mono text-[11px] text-white">agents cannot merge or push to main</span>
             </div>
-            <h3 className="text-xl text-white font-medium">
-              Air-Gapped &amp; Private VPC Enclaves
-            </h3>
+            <h3 className="text-xl text-white font-medium">A pull request with proof, and an on-call human</h3>
             <p className="mt-1 text-on-surface-variant text-[13px] max-w-xl">
-              Deploy entirely within AWS Nitro Enclaves, GCP Confidential VMs, or
-              on-prem air-gapped clusters. Source code AST never traverses external
-              networks.
+              When a fix passes every test, PatchLoop opens a GitHub pull request with the
+              diff and the test output, and a Slack alert tells the on-call engineer. They
+              review and merge it. Everything is also available from the CLI.
             </p>
 
-            <div className="mt-5 p-3 rounded-lg bg-[#07090e] border border-outline-variant/50 font-mono text-[10px] text-on-surface-variant space-y-1">
-              <div className="flex justify-between text-outline">
-                <span>[AUDIT_ENCLAVE_DAEMON]</span>
-                <span className="text-primary">ISOLATION INTEGRITY: 100%</span>
+            <div className="mt-5 p-3 rounded-lg bg-[#07090e] border border-outline-variant/50 font-mono text-[10.5px] text-on-surface-variant space-y-1 overflow-x-auto">
+              <div className="whitespace-nowrap">
+                <span className="text-primary">$</span> patchloop login --token plk_…
               </div>
-              <div>
-                [14:22:01.092] VPC egress firewall:{" "}
-                <span className="text-white">DENY ALL OUTBOUND</span> (0 packets transmitted)
-              </div>
-              <div>
-                [14:22:01.094] Ephemeral micro-VM storage: Shredded with{" "}
-                <span className="text-white">DoD 5220.22-M wipe</span>
-              </div>
-              <div>
-                [14:22:01.099] Cryptographic proof pinned to immutable audit trail:{" "}
-                <span className="text-secondary">0x8a92f0...</span>
+              <div className="whitespace-nowrap">
+                <span className="text-primary">$</span> patchloop fix paginate
               </div>
             </div>
           </div>
-          <div className="mt-4 pt-3 border-t border-outline-variant/40 flex items-center justify-between text-on-surface-variant font-mono text-[11px]">
-            <span>Zero telemetry egress policy</span>
-            <span className="text-primary font-medium">Review Security Whitepaper →</span>
+          <div className="mt-4 pt-3 border-t border-outline-variant/40 flex items-center justify-between text-on-surface-variant font-mono text-[11px] gap-2">
+            <span>GitHub pull requests · Slack alerts · CLI</span>
+            <Link href="/docs/cli" className="text-primary font-medium hover:underline">
+              CLI docs →
+            </Link>
           </div>
         </div>
       </div>
