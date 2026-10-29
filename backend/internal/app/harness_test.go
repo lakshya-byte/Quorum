@@ -159,6 +159,9 @@ func newMemEnv(t *testing.T, mutate func(*config.Config)) *memEnv {
 	if mutate != nil {
 		mutate(cfg)
 	}
+	if cfg.SlackWebhookURL == "USE_HOOK" {
+		cfg.SlackWebhookURL = hookSv.URL + "/global"
+	}
 	store := memstore.New()
 	notes := store.NotificationStore()
 	a := app.Build(cfg, app.Stores{Runs: store, GitHub: store, Slack: store, Notifications: notes, Dedupe: store},

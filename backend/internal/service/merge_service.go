@@ -69,8 +69,10 @@ func evaluate(info *PRInfo) {
 		info.Reason = "checks are still running"
 	case info.Checks.State == "none":
 		info.MergeAllowed, info.Reason, info.Warning = true, "", "no checks configured"
-	default:
+	case info.Checks.State == "success":
 		info.MergeAllowed, info.Reason = true, ""
+	default: // fail closed on anything we do not understand
+		info.Reason = "could not determine the state of the checks"
 	}
 }
 

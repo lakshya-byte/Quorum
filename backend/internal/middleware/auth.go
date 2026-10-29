@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
+	"patchloop-backend/internal/pkg/apierr"
 	"strings"
 
 	pkgjwt "patchloop-backend/internal/pkg/jwt"
@@ -39,12 +40,12 @@ func RequireAuth(accessSecret string, tokenAuth ...TokenAuthenticator) gin.Handl
 			scheme, value, ok := strings.Cut(authz, " ")
 			value = strings.TrimSpace(value)
 			if !ok || !strings.EqualFold(scheme, "Bearer") || !strings.HasPrefix(value, apiTokenPrefix) {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header"})
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header", "code": apierr.Code(http.StatusUnauthorized)})
 				return
 			}
 			userID, email, err := ta.Authenticate(c.Request.Context(), value)
 			if err != nil {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or revoked api token"})
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or revoked api token", "code": apierr.Code(http.StatusUnauthorized)})
 				return
 			}
 			c.Set(ContextUserIDKey, userID)
@@ -56,13 +57,13 @@ func RequireAuth(accessSecret string, tokenAuth ...TokenAuthenticator) gin.Handl
 
 		token, err := c.Cookie(AccessCookieName)
 		if err != nil || token == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "not authenticated", "code": apierr.Code(http.StatusUnauthorized)})
 			return
 		}
 
 		claims, err := pkgjwt.ParseAccessToken(accessSecret, token)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired session"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired session", "code": apierr.Code(http.StatusUnauthorized)})
 			return
 		}
 
@@ -80,7 +81,7 @@ func RequireAgentSecret(secret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		got := []byte(c.GetHeader("X-Agent-Secret"))
 		if len(want) == 0 || subtle.ConstantTimeCompare(got, want) != 1 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid agent secret"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid agent secret", "code": apierr.Code(http.StatusUnauthorized)})
 			return
 		}
 		c.Next()

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"patchloop-backend/internal/pkg/apierr"
 
 	"patchloop-backend/internal/observability"
 
@@ -52,7 +53,7 @@ func relayErrorEvents(message string) []byte {
 func (r *SSERelay) Serve(c *gin.Context, target string) {
 	u, err := url.Parse(target)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "bad agent url"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "bad agent url", "code": apierr.Code(http.StatusInternalServerError)})
 		return
 	}
 	ctx := c.Request.Context()

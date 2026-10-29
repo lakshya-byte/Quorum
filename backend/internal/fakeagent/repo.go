@@ -116,7 +116,10 @@ func (a *Agent) createRepoRun(w http.ResponseWriter, r *http.Request) {
 	seq := a.prSeq
 	created := map[string]any{"repo": body.Repo.FullName, "branch": body.Repo.Branch, "task": body.Task, "user_id": body.UserID,
 		"engine": body.Engine, "auto_pr": body.AutoPR, "run_url": body.RunURL, "source": body.Source,
-		"has_token": hasToken, "followup": body.Followup, "issue_ref": body.IssueRef}
+		"has_token": hasToken, "followup": body.Followup}
+	if body.IssueRef != nil {
+		created["issue_ref"] = *body.IssueRef
+	}
 	if hasToken {
 		created["github_token"] = *body.GitHubToken // for tests only; never logged or echoed
 	}

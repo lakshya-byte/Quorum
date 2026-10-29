@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"patchloop-backend/internal/pkg/apierr"
 	"time"
 
 	"patchloop-backend/internal/dto"
@@ -61,17 +62,17 @@ func toUserResponse(u *models.User) dto.UserResponse {
 func (h *AuthHandler) Signup(c *gin.Context) {
 	var req dto.SignupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": apierr.Code(http.StatusBadRequest)})
 		return
 	}
 
 	user, err := h.auth.Signup(c.Request.Context(), req)
 	if err != nil {
 		if err == service.ErrEmailTaken {
-			c.JSON(http.StatusConflict, gin.H{"error": "an account with this email already exists"})
+			c.JSON(http.StatusConflict, gin.H{"error": "an account with this email already exists", "code": apierr.Code(http.StatusConflict)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create account"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create account", "code": apierr.Code(http.StatusInternalServerError)})
 		return
 	}
 
@@ -84,14 +85,14 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 func (h *AuthHandler) VerifyOTP(c *gin.Context) {
 	var req dto.VerifyOTPRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": apierr.Code(http.StatusBadRequest)})
 		return
 	}
 
 	user, pair, err := h.auth.VerifyOTP(c.Request.Context(), req)
 	if err != nil {
 		status, msg := otpErrorStatus(err)
-		c.JSON(status, gin.H{"error": msg})
+		c.JSON(status, gin.H{"error": msg, "code": apierr.Code(status)})
 		return
 	}
 
@@ -102,19 +103,19 @@ func (h *AuthHandler) VerifyOTP(c *gin.Context) {
 func (h *AuthHandler) ResendOTP(c *gin.Context) {
 	var req dto.ResendOTPRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": apierr.Code(http.StatusBadRequest)})
 		return
 	}
 
 	if err := h.auth.ResendOTP(c.Request.Context(), req.Email); err != nil {
 		switch err {
 		case service.ErrResendCooldown:
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "please wait before requesting another code"})
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "please wait before requesting another code", "code": apierr.Code(http.StatusTooManyRequests)})
 		case service.ErrUserNotFound:
 			// Avoid leaking whether an email is registered.
 			c.JSON(http.StatusOK, gin.H{"message": "if an account exists, a new code has been sent"})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resend code"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resend code", "code": apierr.Code(http.StatusInternalServerError)})
 		}
 		return
 	}
@@ -125,7 +126,7 @@ func (h *AuthHandler) ResendOTP(c *gin.Context) {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req dto.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": apierr.Code(http.StatusBadRequest)})
 		return
 	}
 
@@ -133,11 +134,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	if err != nil {
 		switch err {
 		case service.ErrInvalidCredentials:
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password", "code": apierr.Code(http.StatusUnauthorized)})
 		case service.ErrEmailNotVerified:
 			c.JSON(http.StatusForbidden, gin.H{"error": "please verify your email before signing in", "code": "EMAIL_NOT_VERIFIED"})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sign in"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sign in", "code": apierr.Code(http.StatusInternalServerError)})
 		}
 		return
 	}
@@ -149,14 +150,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	rawRefresh, err := c.Cookie(middleware.RefreshCookieName)
 	if err != nil || rawRefresh == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated", "code": apierr.Code(http.StatusUnauthorized)})
 		return
 	}
 
 	pair, err := h.auth.Refresh(c.Request.Context(), rawRefresh)
 	if err != nil {
 		h.clearAuthCookies(c)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "session expired, please sign in again"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "session expired, please sign in again", "code": apierr.Code(http.StatusUnauthorized)})
 		return
 	}
 
@@ -175,7 +176,7 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	userID := c.GetString(middleware.ContextUserIDKey)
 	user, err := h.auth.GetUserByID(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found", "code": apierr.Code(http.StatusNotFound)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"user": toUserResponse(user)})

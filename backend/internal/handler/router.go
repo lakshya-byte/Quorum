@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"net/http"
+
 	"patchloop-backend/internal/middleware"
 	"patchloop-backend/internal/service"
 
@@ -36,6 +38,10 @@ func NewRouter(authHandler *AuthHandler, cfg RouterConfig) *gin.Engine {
 	r.Use(nrgin.MiddlewareHandlerTxnNames(cfg.NewRelic))
 	r.Use(middleware.Observability())
 	r.Use(middleware.CORS(cfg.FrontendOrigin))
+
+	r.NoRoute(func(c *gin.Context) { apiError(c, http.StatusNotFound, "not_found", "no such endpoint") })
+	r.HandleMethodNotAllowed = true
+	r.NoMethod(func(c *gin.Context) { apiError(c, http.StatusMethodNotAllowed, "bad_request", "method not allowed") })
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})

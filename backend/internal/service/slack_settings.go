@@ -22,7 +22,7 @@ var (
 var (
 	slackWebhookPattern = regexp.MustCompile(`^https://hooks\.slack\.com/(services|workflows)/[A-Za-z0-9/_-]{8,200}$`)
 	// DEV_MODE only: lets e2e tests point a "webhook" at a local capture server.
-	loopbackWebhookPattern = regexp.MustCompile(`^http://(127\.0\.0\.1|localhost)(:[0-9]{2,5})?/[A-Za-z0-9/_.-]{0,200}$`)
+	loopbackWebhookPattern = regexp.MustCompile(`^http://(127\.0\.0\.1|localhost)(:[0-9]{2,5})?/[A-Za-z0-9/_-]{0,200}$`)
 )
 
 // SlackSettingsService owns the per-user Slack configuration: incoming
