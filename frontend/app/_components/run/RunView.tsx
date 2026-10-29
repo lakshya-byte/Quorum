@@ -132,7 +132,7 @@ export default function RunView({ state, bug, solvedActions, onRetry, notice }: 
     (state.firstNodeAt != null && state.startedAt != null ? state.firstNodeAt - state.startedAt : null);
   const best = bestId != null ? state.nodes[bestId] : undefined;
   const original = state.nodes[0]?.code ?? state.nodes[state.children[-1]?.[0] ?? -999]?.code;
-  const hasGuards = Object.keys(state.guards).length > 0 || state.engine === "graph";
+  const hasGuards = Object.keys(state.guards).length > 0 || (state.engine === "graph" && !state.fromSnapshot);
   const selNode = selected != null ? state.nodes[selected] : undefined;
   const nonGuardErrors = state.errors;
 
@@ -172,7 +172,7 @@ export default function RunView({ state, bug, solvedActions, onRetry, notice }: 
             </span>
           )}
           {state.fromSnapshot && state.status === "finished" && (
-            <span className="font-mono text-[10.5px] text-on-surface-variant">saved result</span>
+            <span className="font-mono text-[10.5px] text-on-surface-variant">saved result · guard, triage and critic details are shown while a run is live</span>
           )}
         </div>
         {hasGuards && (

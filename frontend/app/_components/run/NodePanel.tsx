@@ -57,7 +57,7 @@ export default function NodePanel({
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] lg:bg-black/20" onClick={onClose} aria-hidden />
+      <div className="fixed inset-0 z-40 bg-black/50 lg:bg-black/30" onClick={onClose} aria-hidden />
       <aside
         role="dialog"
         aria-label={`Attempt #${node.id}`}
@@ -120,7 +120,7 @@ export default function NodePanel({
         <div className="flex-1 overflow-auto p-4 sm:p-5" data-lenis-prevent>
           {tab === "diff" &&
             (diff ? (
-              <div className="rounded-lg bg-[#07090e] border border-outline-variant/50 overflow-x-auto font-mono text-[12px] leading-[1.6]">
+              <div className="rounded-lg bg-[#07090e] border border-outline-variant/50 overflow-x-auto font-mono text-[12px] leading-[1.6] [font-variant-ligatures:none]">
                 <div className="px-3 py-1.5 text-[10.5px] text-outline border-b border-outline-variant/40">
                   diff against the original code (#0)
                 </div>
@@ -131,9 +131,9 @@ export default function NodePanel({
                         key={i}
                         className={l.kind === "add" ? "bg-primary/12 text-primary" : l.kind === "del" ? "bg-error/12 text-error" : "text-on-surface-variant"}
                       >
-                        <td className="select-none text-right pl-2 pr-1 text-outline/70 w-8 align-top">{l.a ?? ""}</td>
-                        <td className="select-none text-right pr-2 text-outline/70 w-8 align-top">{l.b ?? ""}</td>
-                        <td className="select-none w-4 align-top">{l.kind === "add" ? "+" : l.kind === "del" ? "-" : " "}</td>
+                        <td className="select-none text-right pl-2 pr-2 text-outline/70 w-9 align-top">{l.a ?? ""}</td>
+                        <td className="select-none text-right pr-3 text-outline/70 w-9 align-top border-r border-outline-variant/30">{l.b ?? ""}</td>
+                        <td className="select-none w-5 pl-2 align-top">{l.kind === "add" ? "+" : l.kind === "del" ? "-" : " "}</td>
                         <td className="whitespace-pre pr-3">{l.text || " "}</td>
                       </tr>
                     ))}
@@ -146,7 +146,7 @@ export default function NodePanel({
 
           {tab === "code" &&
             (node.code ? (
-              <pre className="rounded-lg bg-[#07090e] border border-outline-variant/50 p-3 overflow-x-auto font-mono text-[12px] leading-[1.6] text-on-surface whitespace-pre">
+              <pre className="rounded-lg bg-[#07090e] border border-outline-variant/50 p-3 overflow-x-auto font-mono text-[12px] leading-[1.6] text-on-surface whitespace-pre [font-variant-ligatures:none]">
                 {node.code}
               </pre>
             ) : (

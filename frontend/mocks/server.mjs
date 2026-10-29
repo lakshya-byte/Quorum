@@ -228,7 +228,7 @@ function buildScript(bug, engine, mode) {
 
   const S = bug.strategies;
   const r1 = [
-    [1, "wrong", { idea: "Shift the start index by one", strategy: S[0] }],
+    [1, "wrong", { idea: "Minimal one-line change to the core expression", strategy: S[0] }],
     [2, "partial", { idea: "Fix the core computation, keep the rest", strategy: S[1] }],
     [3, "policyBad", {
       idea: "Patch and publish the change directly",
