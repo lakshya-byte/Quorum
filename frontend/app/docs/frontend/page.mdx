@@ -23,13 +23,24 @@ app/
   (auth)/
     signin/page.tsx               # → "/signin"
     signup/page.tsx               # → "/signup"
-    _components/                  # SignInCard, SignUpCard
+    _components/                  # SignInCard, SignUpCard, AuthForms (wired to the API)
+
+  (app)/                          # AuthProvider + app header
+    try/                          # → "/try" (public demo)
+    dashboard/                    # → "/dashboard"
+    runs/[id]/                    # → "/runs/:id"
+    settings/tokens/              # → "/settings/tokens"
+
+  _components/run/                # RunView, AttemptTree, NodeCard, NodePanel (shared by /try and /runs/[id])
+  _lib/                           # api.ts, auth.tsx, runState.ts, useRunStream.ts, diff.ts
+
+mocks/server.mjs                  # dependency-free mock backend (npm run mock)
 
   docs/
     layout.tsx, page.mdx, .../    # → "/docs" and sub-pages (this section)
 ```
 
-`(marketing)` and `(auth)` are route groups: they organize files without
+`(marketing)`, `(auth)` and `(app)` are route groups: they organize files without
 adding a URL segment. Anything prefixed `_` (`_components`, `_lib`) is
 guaranteed by Next.js to never become a route, which is what keeps
 component folders from ever colliding with real pages.
@@ -59,8 +70,7 @@ loaded globally in `app/layout.tsx` and used via
 
 - **Lenis** (`app/_lib/lenis.ts`) — a module-scoped singleton set up once by
   `<SmoothScroll />` in the root layout. Any component can call
-  `smoothScrollTo(target)` to trigger a smooth scroll (e.g. the hero and
-  quickstart "launch demo" buttons scrolling to the live dashboard).
+  `smoothScrollTo(target)` to trigger a smooth scroll.
 - **GSAP** (`@gsap/react`'s `useGSAP` + `ScrollTrigger`) — entrance timelines
   and scroll-scrubbed effects, e.g. the hero's staggered fade-in and the
   bento grid's stagger-on-scroll-into-view.
@@ -71,21 +81,37 @@ loaded globally in `app/layout.tsx` and used via
 
 | Component | Renders |
 | --- | --- |
-| `Header` | Fixed nav — logo, status badges, section links, Sign in / Get Started |
-| `Hero` | Headline, CLI-style pill, launch-demo CTA, background image |
-| `ProverDashboard` | Mock "live VM console" — verification steps, streaming log, patch diff |
-| `CredibilityStrip` | Stat tiles (latency, isolation, verification) |
-| `ArchitectureBento` | Bento grid explaining the sandboxing architecture |
-| `ProofExplorer` | Before/after diff viewer with a mock "re-run sandbox" action |
-| `Quickstart` | Install methods (CLI/GitHub/Docker/Terraform) with copy-to-clipboard |
-| `Footer` | Status line, commit hash, links |
+| `Header` | Fixed nav — logo, section links, Try it, Sign in / Get Started |
+| `Hero` | Headline, CLI-style pill, "Try the live demo" CTA (links to `/try`) |
+| `ProverDashboard` | Static illustration of a recorded run: agent team stages, event stream, winning diff |
+| `CredibilityStrip` | What the product guarantees: sandbox per attempt, tests decide, guardrails, human merges |
+| `ArchitectureBento` | How it works: Nebius Sandboxes, tests as judge, Nemotron via Nebius Token Factory, guardrails, human in the loop |
+| `ProofExplorer` | Before/after diff of the paginate demo bug with its test results |
+| `Quickstart` | CLI, HTTP API, local setup and mock commands with copy-to-clipboard |
+| `Footer` | Links |
 
 ### `/signin`, `/signup` — auth pages (`app/(auth)/`)
 
-`SignInCard` and `SignUpCard` are fully client-side forms (email/password,
-passkey button, SSO buttons). They are **not yet wired to the backend** —
-see [API reference](/docs/api-reference) for the endpoints they should call
-next (`POST /api/auth/login`, `POST /api/auth/signup`, etc.).
+Email + password sign-in and sign-up, wired to `/api/auth/*`. Sign-up and an
+unverified sign-in continue to a 6-digit code screen (`verify-otp`, with a
+resend button). Backend error messages are shown as-is. All calls use
+`credentials: "include"`; a `401` triggers one `POST /api/auth/refresh` and a
+retry. `?next=/path` returns to the protected page that redirected you.
+
+### `/try`, `/dashboard`, `/runs/[id]`, `/settings/tokens` (`app/(app)/`)
+
+- `/try` is public: it lists `/api/demo/bugs`, starts a guest run and streams
+  `/api/demo/runs/:id/events`. It shows the 429 message when the guest limit is hit.
+- `/dashboard`, `/runs/*` and `/settings/*` are protected client-side: the
+  `RequireAuth` guard calls `/api/auth/me` and redirects to `/signin` without a session.
+- `/runs/[id]` streams with `EventSource` (`withCredentials`), reconnects with
+  exponential backoff, and renders an already finished run from `GET /api/runs/:id`
+  without streaming.
+- The run state is a pure, idempotent reducer (`_lib/runState.ts`): node objects
+  keep their identity, so memoised `NodeCard`s only re-render when their own data
+  changes, and a reconnect that replays old events changes nothing.
+- The side panel diffs each attempt against node 0 with a small LCS line diff
+  (`_lib/diff.ts`).
 
 ### `/docs` — this documentation (`app/docs/`)
 

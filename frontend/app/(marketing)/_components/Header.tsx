@@ -18,11 +18,11 @@ export default function Header() {
           <div className="hidden sm:flex items-center gap-2 ml-1">
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-container-high text-primary border border-primary/25 flex items-center gap-1.5 tracking-wide">
               <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-              Engine v2.4 Hermetic
+              Agents propose · tests decide
             </span>
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-container-low text-on-surface-variant/80 border border-outline-variant/40 flex items-center gap-1 tracking-wide">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              All Systems Operational
+              Humans merge
             </span>
           </div>
         </div>
@@ -32,13 +32,13 @@ export default function Header() {
             className="px-3 py-1 rounded text-on-surface-variant hover:text-white hover:bg-surface-container-high transition-colors text-[13px]"
             href="#prover-dashboard"
           >
-            Core Loop
+            Example run
           </a>
           <a
             className="px-3 py-1 rounded text-on-surface-variant hover:text-white hover:bg-surface-container-high transition-colors text-[13px]"
             href="#proof-explorer"
           >
-            Telemetry
+            Before / after
           </a>
           <a
             className="px-3 py-1 rounded text-on-surface-variant hover:text-white hover:bg-surface-container-high transition-colors text-[13px]"
@@ -50,8 +50,14 @@ export default function Header() {
             className="px-3 py-1 rounded text-on-surface-variant hover:text-white hover:bg-surface-container-high transition-colors text-[13px]"
             href="#benchmarks"
           >
-            Benchmarks
+            Principles
           </a>
+          <Link
+            className="px-3 py-1 rounded text-primary hover:text-white hover:bg-surface-container-high transition-colors text-[13px]"
+            href="/try"
+          >
+            Try it
+          </Link>
           <Link
             className="px-3 py-1 rounded text-on-surface-variant hover:text-white hover:bg-surface-container-high transition-colors text-[13px]"
             href="/docs"

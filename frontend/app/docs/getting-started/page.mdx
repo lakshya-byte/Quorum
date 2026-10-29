@@ -1,58 +1,107 @@
 # Getting started
 
-Both repos need to be running for the full flow (sign up → verify email →
-sign in) to work end to end. The frontend on its own is fine for working on
-the marketing site or UI only.
+PatchLoop is three services in one monorepo:
+
+| Service | Folder | Port | Who talks to it |
+| --- | --- | --- | --- |
+| Frontend (Next.js) | `frontend/` | `3000` | the browser |
+| Backend API (Go + Gin + MongoDB) | `backend/` | `8080` | the frontend and the CLI |
+| Agent service (Python + FastAPI + LangGraph) | `agent/` | `8001` | the backend only (internal) |
+
+The browser and the CLI only ever call the backend. The backend starts runs on
+the agent service, relays its event stream unchanged, stores results in MongoDB
+and opens pull requests. The agent service is never exposed to the browser.
 
 ## Prerequisites
 
 - Node.js 20+ and npm
 - Go 1.22+
+- Python 3.11+
 - A running MongoDB instance (local or Docker)
-- A [Resend](https://resend.com) API key, for sending OTP verification emails
+- Optional, for real runs: a Nebius API key (Token Factory for Nemotron models,
+  Nebius Sandboxes for isolated test runs), a GitHub token for pull requests,
+  a Resend key for OTP emails
 
-## Frontend
+## 1. Agent service (port 8001, internal)
 
 ```bash
-cd patchloop
-npm install
-npm run dev
+cd agent
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env          # AGENT_SHARED_SECRET, NEBIUS_*, MODEL_*, GITHUB_*
+uvicorn app.main:app --port 8001
 ```
 
-Opens at [http://localhost:3000](http://localhost:3000). Routes:
+Without Nebius credentials runs use `fake` mode: scripted fixes, tested in a
+local subprocess, no tokens spent. See `agent/README.md` for the modes.
 
-- `/` — marketing landing page
-- `/signin`, `/signup` — auth pages
-- `/docs` — this documentation
-
-## Backend
+## 2. Backend (port 8080)
 
 ```bash
-cd patchloop-backend
-cp .env.example .env
-# fill in JWT_ACCESS_SECRET, JWT_REFRESH_SECRET, RESEND_API_KEY
+cd backend
+cp .env.example .env          # JWT secrets, Mongo URI, FRONTEND_ORIGIN, agent URL and secret
 go run ./cmd/api
 ```
 
-Listens on `:8080` by default (`PORT` in `.env`). See
-[Backend → Environment variables](/docs/backend#environment-variables) for
-the full list.
-
-Quick local Mongo via Docker if you don't already have one running:
+Quick local Mongo via Docker:
 
 ```bash
 docker run -d --name patchloop-mongo -p 27017:27017 mongo:7
 ```
 
-## Verifying the connection
-
-With both running, the frontend at `http://localhost:3000` and the backend
-at `http://localhost:8080` need to be able to talk to each other with
-credentials (cookies) included. The backend's `FRONTEND_ORIGIN` env var
-controls the allowed CORS origin — keep it pointed at wherever the frontend
-is actually running.
+`FRONTEND_ORIGIN` must match where the frontend runs (default
+`http://localhost:3000`), because the frontend calls the API with cookies.
 
 ```bash
 curl http://localhost:8080/health
 # {"status":"ok"}
 ```
+
+## 3. Frontend (port 3000)
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+The API base URL comes from `NEXT_PUBLIC_API_URL` (default
+`http://localhost:8080`). Routes:
+
+- `/` — landing page
+- `/try` — public live demo, no account needed
+- `/signup`, `/signin` — email + password, verified with a 6-digit code
+- `/dashboard` — your runs and the "New fix" panel
+- `/runs/[id]` — the live tree of attempts for one run
+- `/settings/tokens` — API tokens for the CLI
+- `/docs` — this documentation
+
+## Frontend without the backend: the mock
+
+`frontend/mocks/server.mjs` is a dependency-free mock of the backend API: auth
+with cookies and Bearer tokens, bugs, runs, tokens, the guest demo, and
+scripted event streams with every event type (guards, triage, parallel nodes, a
+policy-blocked node, a security-flagged node, critic lessons, a winner, an
+unsolved run and a run blocked by the input guard). Any OTP code `123456` works.
+
+```bash
+cd frontend
+npm run mock                      # MOCK_PORT=8080 by default
+npm run dev                       # NEXT_PUBLIC_API_URL defaults to http://localhost:8080
+```
+
+Use other ports if the real backend is already on 8080:
+
+```bash
+MOCK_PORT=18090 FRONTEND_ORIGIN=http://localhost:13000 npm run mock
+NEXT_PUBLIC_API_URL=http://localhost:18090 npx next dev -p 13000
+```
+
+Mock knobs: `MOCK_SPEED` (timing multiplier), `MOCK_DEMO_LIMIT` (guest runs per
+hour, default 3), `MOCK_ACCESS_TTL` (access cookie lifetime in seconds, to test
+refresh), `MOCK_DROP_ONCE=1` (cuts each stream once, to test reconnects).
+
+## Next
+
+- [CLI](/docs/cli) — fix bugs from your terminal with an API token
+- [API reference](/docs/api-reference) — every endpoint and the event stream

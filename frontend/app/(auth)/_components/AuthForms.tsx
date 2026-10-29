@@ -64,7 +64,7 @@ export function OtpForm({ email, onBack }: { email: string; onBack?: () => void 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [cooldown, setCooldown] = useState(30);
+  const [cooldown, setCooldown] = useState(60);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -91,7 +91,7 @@ export function OtpForm({ email, onBack }: { email: string; onBack?: () => void 
     try {
       const r = await authApi.resendOtp(email);
       setInfo(r.message || "A new code has been sent.");
-      setCooldown(30);
+      setCooldown(60);
     } catch (err) {
       setError(errorMessage(err));
     }
