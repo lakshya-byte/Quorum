@@ -52,6 +52,8 @@ export AGENT_SHARED_SECRET=$(openssl rand -hex 32)        # one value for agent 
 cp agent/.env.example agent/.env                           # fill in keys (optional: fake mode without)
 cp backend/.env.example backend/.env                       # set JWT_* secrets; RESEND_API_KEY or DEV_MODE=true
 docker compose up --build                                  # frontend :3000, backend :8080
+AGENT_SHARED_SECRET=$AGENT_SHARED_SECRET scripts/e2e.sh   # same e2e; agent-direct checks SKIP (internal only)
+docker compose down                                        # also needs AGENT_SHARED_SECRET in the env
 ```
 
 The agent has no published port; only the backend reaches it on the compose network. Values in
