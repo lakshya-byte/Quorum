@@ -96,3 +96,37 @@ def test_replay_streams_a_saved_real_run(client: TestClient, tmp_path: Path) -> 
     assert body["mode"] == "replay" and body["replay_of"] == "abc123"
     types = [e["type"] for e in read_sse(client, body["run_id"])]
     assert types == ["run_started", "node", "round", "node", "done", "end"]
+
+
+def test_graph_run_over_http_streams_every_event_type(client: TestClient) -> None:
+    tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    body = client.post("/runs", json={"bug_id": "lru_cache", "engine": "graph"},
+                       headers={**HEADERS, "traceparent": tp}).json()
+    assert body["engine"] == "graph" and body["mode"] == "fake"
+    assert body["trace_id"] == "4bf92f3577b34da6a3ce929d0e0e4736"
+    events = read_sse(client, body["run_id"])
+    types = [e["type"] for e in events]
+    assert types[0] == "run_started" and types[-1] == "end"
+    for kind in ("guard", "triage", "round", "node", "critic", "done"):
+        assert kind in types
+    node = next(e["data"] for e in events if e["type"] == "node" and e["data"]["depth"] == 1)
+    assert {"ok", "reasons"} <= node["policy"].keys() and {"ok", "new_findings"} <= node["security"].keys()
+    done = next(e["data"] for e in events if e["type"] == "done")
+    assert done["solved"] and done["latency_ms"] > 0 and done["time_to_first_node_ms"] is not None
+    assert {"prompt_tokens", "completion_tokens"} <= done["usage"].keys()
+    run = client.get(f"/runs/{body['run_id']}", headers=HEADERS).json()
+    assert run["engine"] == "graph" and run["pr_draft"]["guard"] == "pass"
+
+
+def test_loop_engine_still_available(client: TestClient) -> None:
+    body = client.post("/runs", json={"bug_id": "paginate", "engine": "loop"}, headers=HEADERS).json()
+    assert body["engine"] == "loop"
+    types = [e["type"] for e in read_sse(client, body["run_id"])]
+    assert types[0] == "run_started" and "guard" in types and "done" in types and types[-1] == "end"
+    assert "triage" not in types
+
+
+def test_events_and_pr_need_secret(client: TestClient) -> None:
+    assert client.get("/runs/x/events").status_code == 401
+    assert client.get("/runs/x").status_code == 401
+    assert client.post("/runs/x/pr").status_code == 401
