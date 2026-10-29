@@ -9,6 +9,7 @@
 //   MOCK_SPEED       timing multiplier for scripted runs (default 1; 2 = twice as slow)
 //   MOCK_DEMO_LIMIT  guest runs per hour per IP (default 3)
 //   MOCK_ACCESS_TTL  access-cookie lifetime in seconds (default 900)
+//   MOCK_GITHUB_APP  "1" = GET /api/github/connect returns a mock install URL (else 503 "not configured")
 //   MOCK_DROP_ONCE   "1" = cut each run's first stream after the 4th event (tests reconnect)
 //
 // Any OTP code "123456" verifies. Emails are never logged.
@@ -16,6 +17,7 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import { BUGS, getBug, publicBug } from "./bugs.mjs";
+import { DEMO_REPOS, repoByName, candidateFiles, candidateDiff } from "./repos.mjs";
 
 const PORT = Number(process.env.MOCK_PORT || 8080);
 const ORIGINS = (process.env.FRONTEND_ORIGIN || "http://localhost:3000")
@@ -40,6 +42,14 @@ const apiTokens = new Map(); // id -> { id, userId, name, prefix, hash, createdA
 const runs = new Map(); // id -> run
 const demoHits = new Map(); // ip -> [timestamps]
 let prCounter = 41;
+const github = new Map(); // userId -> { mode, login }
+const slackHooks = new Map(); // userId -> webhook url
+const slackLog = []; // messages the mock "sent"
+const notifications = []; // { id, userId, kind, title, body, runId, read, createdAt }
+const installStates = new Map(); // state -> userId
+const taskHits = new Map(); // userId -> [timestamps]
+const PUBLIC_BASE = process.env.MOCK_PUBLIC_URL || `http://localhost:${process.env.MOCK_PORT || 8080}`;
+const FRONTEND = process.env.FRONTEND_URL || (process.env.FRONTEND_ORIGIN || "http://localhost:3000").split(",")[0].trim();
 
 const rid = (n = 12) => crypto.randomBytes(n).toString("hex");
 const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
@@ -54,7 +64,7 @@ function cors(req, res) {
     res.setHeader("Vary", "Origin");
   }
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Last-Event-ID");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
 }
 
 function json(res, status, body) {
@@ -295,6 +305,224 @@ function buildScript(bug, engine, mode) {
   return ev;
 }
 
+
+// ---------- repo runs (contract: repo flow) ----------
+function repoOutput(repo, failing, names) {
+  const total = repo.total;
+  const dots = Array.from({ length: total }, (_, i) => (i < failing ? "F" : ".")).join("");
+  const fails = failing ? `\n${"=".repeat(70)}\nFAIL: ${names || "test_case"}\nAssertionError: expected value did not match\n` : "";
+  return `${dots}${fails}\n${"-".repeat(70)}\nRan ${total} tests in 0.00${3 + failing}s\n\n${failing ? `FAILED (failures=${failing})` : "OK"}`;
+}
+
+function buildRepoScript(repo, branch, run, opts = {}) {
+  const s = SPEED;
+  const ev = [];
+  let t = 0;
+  const push = (gap, type, data) => {
+    t += Math.round(gap * s);
+    ev.push({ at: t, type, data });
+  };
+  const nano = "nemotron-nano (Nebius Token Factory)";
+  const sup = "nemotron-super (Nebius Token Factory)";
+  const primary = (files) => files[Object.keys(files).find((p) => !p.startsWith("tests/"))];
+  let tokens = 0;
+  const nodeOf = (id, parent, depth, c, base) => {
+    const files = c ? candidateFiles(repo, c) : repo.files;
+    const blocked = c?.blocked;
+    const failing = c ? c.failing ?? 0 : repo.repro.failing;
+    const tk = id === 0 ? 0 : 1100 + ((id * 173) % 700);
+    tokens += tk;
+    return {
+      id,
+      parent,
+      depth,
+      idea: c ? c.idea : "Original code",
+      strategy: c ? repo.strategies[(id - 1) % 3] : null,
+      code: primary(files),
+      files,
+      diff: c ? candidateDiff(repo, c) : "",
+      output: blocked ? `Blocked by the policy gate before execution.\n${blocked.map((r) => `- ${r}`).join("\n")}` : repoOutput(repo, failing, repo.repro.test_name),
+      passed: blocked ? 0 : repo.total - failing,
+      total: repo.total,
+      score: blocked ? 0 : Math.round(((repo.total - failing) / repo.total - 0.002 * (c ? Object.keys(c.edits).length : 0)) * 1000) / 1000,
+      model: id === 0 ? null : depth > 1 ? sup : nano,
+      latency_ms: id === 0 ? 520 : 2100 + ((id * 311) % 2300),
+      tokens: tk,
+      policy: blocked ? { ok: false, reasons: blocked } : { ok: true, reasons: [] },
+      security: c?.security
+        ? { ok: false, new_findings: [{ rule: "B307", severity: "MEDIUM", message: "Use of possibly insecure function: eval()", line: 14 }] }
+        : { ok: true, new_findings: [] },
+      base,
+    };
+  };
+  const clean = (n) => {
+    const { base, ...rest } = n;
+    void base;
+    return rest;
+  };
+
+  push(0, "run_started", { run_id: run.id, bug_id: "", mode: "fake", engine: "graph" });
+  push(120, "repo", { full_name: repo.fullName, branch, files: Object.keys(repo.files).length, language: repo.language, test_command: "python -m unittest", truncated: false });
+  push(160, "guard", { stage: "input", verdict: "pass", reasons: [], latency_ms: 88 });
+  push(520, "locate", { files: repo.locate });
+  if (opts.followup) {
+    push(300, "triage", { cause: `Follow-up request: ${opts.followup}`, strategies: ["Apply the requested change on top of the earlier patch", "Re-run the reproducer and full suite", "Keep the diff small"] });
+    push(200, "node", clean(nodeOf(0, null, 0, null)));
+    push(150, "round", { depth: 1 });
+    const win = repo.candidates.find((c) => c.id === repo.winner);
+    const n = nodeOf(1, 0, 1, win);
+    n.idea = `Follow-up: ${opts.followup.slice(0, 80)}`;
+    push(1100, "node", clean(n));
+    push(250, "critic", { node_id: 1, lesson: "Reproducer and the existing suite both pass on top of the earlier patch." });
+    push(200, "guard", { stage: "output", verdict: "pass", reasons: [], latency_ms: 120 });
+    push(200, "done", { solved: true, best: 1, usage: { prompt_tokens: Math.round(tokens * 0.8), completion_tokens: Math.round(tokens * 0.2) }, latency_ms: t + 200, time_to_first_node_ms: 900 });
+    push(500, "pr", { url: opts.prUrl, branch: opts.prBranch, number: opts.prNumber, fake: true, updated: true });
+    push(10, "end", {});
+    return ev;
+  }
+  push(780, "repro", {
+    path: repo.repro.path,
+    test_name: repo.repro.test_name,
+    failed_on_original: true,
+    output_tail: repoOutput(repo, repo.repro.failing, repo.repro.test_name).split("\n").slice(-8).join("\n"),
+  });
+  push(260, "triage", { cause: repo.cause, strategies: repo.strategies });
+  push(250, "node", clean(nodeOf(0, null, 0, null)));
+
+  let winnerNode = null;
+  const rounds = [...new Set(repo.candidates.map((c) => c.parent))];
+  let depth = 0;
+  for (const parent of rounds) {
+    if (winnerNode) break;
+    depth += 1;
+    push(220, "round", { depth });
+    for (const c of repo.candidates.filter((x) => x.parent === parent)) {
+      if (winnerNode) break;
+      const n = nodeOf(c.id, c.parent, depth, c);
+      push(depth === 1 ? 760 : 1000, "node", clean(n));
+      if (c.id === repo.winner) {
+        winnerNode = n;
+        push(200, "critic", { node_id: c.id, lesson: "Reproducer and the existing suite both pass with the smallest diff and a clean security scan. Remaining candidates cancelled." });
+      } else if (c.blocked) {
+        push(150, "critic", { node_id: c.id, lesson: "Blocked before execution: patches may not touch CI configuration." });
+      } else if (c.security) {
+        push(150, "critic", { node_id: c.id, lesson: "Passes tests but introduces eval(); the security scan flags it. Prefer a plain comparison." });
+      } else if ((c.failing ?? 0) > 0) {
+        push(150, "critic", { node_id: c.id, lesson: parent === 0 && c.label === "partial" ? "Fixes the reported symptom but another test still fails. Keep this patch and extend it." : "Does not fix the failing test. Drop this direction." });
+      }
+    }
+  }
+  push(200, "guard", { stage: "policy", verdict: "pass", reasons: ["Winner touches only existing source files"], latency_ms: 5 });
+  push(220, "guard", { stage: "output", verdict: "pass", reasons: [], latency_ms: 131 });
+  push(200, "done", {
+    solved: true,
+    best: winnerNode.id,
+    usage: { prompt_tokens: Math.round(tokens * 0.78), completion_tokens: Math.round(tokens * 0.22) },
+    latency_ms: t + 200,
+    time_to_first_node_ms: 1900,
+  });
+  if (run.autoPr) {
+    const number = ++prCounter;
+    const prBranch = `patchloop/${run.task.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 32)}-${Math.floor(Date.now() / 1000)}`;
+    push(650, "pr", { url: `https://github.com/${repo.fullName}/pull/${number}`, branch: prBranch, number, fake: true });
+    if (slackHooks.has(run.userId)) push(250, "slack", { sent: true });
+  }
+  push(20, "end", {});
+  return ev;
+}
+
+function prStatus(run) {
+  const pr = run.pr;
+  if (!pr) return null;
+  const age = Date.now() - pr.createdAt;
+  let checks;
+  if (run.repo === "demo/text-tools") checks = { state: "none", failing: [] };
+  else if (run.repo === "demo/inventory-api" && age < 6000 * SPEED) checks = { state: "pending", failing: [] };
+  else checks = { state: "success", failing: [] };
+  const open = !run.merged;
+  let reason = "";
+  let allowed = open;
+  if (!open) reason = "Already merged.";
+  else if (checks.state === "pending") (allowed = false), (reason = "Checks are still running. Merge unlocks when they pass.");
+  else if (checks.state === "failure") (allowed = false), (reason = "A required check is failing.");
+  return {
+    url: pr.url,
+    number: pr.number,
+    state: open ? "open" : "merged",
+    mergeable: true,
+    checks,
+    mergeAllowed: allowed,
+    reason,
+    merged: run.merged || null,
+  };
+}
+
+function createRepoRun({ repo, branch, task, userId, autoPr = true, parent, followup, source = "web" }) {
+  const id = rid(12);
+  const run = {
+    id,
+    userId,
+    bugId: "",
+    agentRunId: "ag_" + rid(6),
+    mode: "fake",
+    engine: "graph",
+    status: "running",
+    solved: false,
+    bestNodeId: null,
+    nodes: [],
+    usage: { prompt_tokens: 0, completion_tokens: 0 },
+    latencyMs: null,
+    prUrl: parent?.prUrl || null,
+    createdAt: now(),
+    completedAt: null,
+    kind: "repo",
+    repo: repo.fullName,
+    branch,
+    task,
+    autoPr,
+    source,
+    prNumber: parent?.prNumber ?? null,
+    prBranch: parent?.prBranch ?? null,
+    parentRunId: parent?.id ?? null,
+    filesChanged: null,
+    merged: null,
+    cost: { tokens: 0, usd: null },
+    safety: { policy: "pass", security: "pass", guard: "pass" },
+    traceId: "tr_" + rid(6),
+    langsmithUrl: null,
+    pr: parent?.pr ?? null,
+    events: [],
+    listeners: new Set(),
+    finished: false,
+    dropped: false,
+  };
+  runs.set(id, run);
+  const script = buildRepoScript(repo, branch, run, followup ? { followup, prUrl: parent.prUrl, prBranch: parent.prBranch, prNumber: parent.prNumber } : {});
+  for (const e of script) {
+    setTimeout(() => {
+      if (e.type === "pr") {
+        run.pr = run.pr ? { ...run.pr } : { url: e.data.url, number: e.data.number, branch: e.data.branch, createdAt: Date.now() };
+        run.prNumber = e.data.number;
+        run.prBranch = e.data.branch;
+        if (!parent) addNote(userId, "pr", "Pull request opened", `${repo.fullName} #${e.data.number} is ready for review`, id);
+        else addNote(userId, "pr", "Pull request updated", `${repo.fullName} #${e.data.number} has a new commit`, id);
+      }
+      if (e.type === "slack") slackLog.push({ at: now(), kind: "run-complete", runId: id, repo: repo.fullName, prUrl: run.prUrl });
+      if (e.type === "done") {
+        const n = run.nodes.find((x) => x.id === e.data.best);
+        run.filesChanged = n?.files ? Object.keys(n.files).filter((p) => n.files[p] !== repo.files[p]).length : null;
+        run.cost = { tokens: (e.data.usage.prompt_tokens || 0) + (e.data.usage.completion_tokens || 0), usd: null };
+      }
+      emit(run, e.type, e.data);
+    }, e.at);
+  }
+  return run;
+}
+
+function addNote(userId, kind, title, body, runId) {
+  notifications.unshift({ id: rid(6), userId, kind, title, body, runId, read: false, createdAt: now() });
+}
+
 function createRun({ bug, engine, mode, userId, guest }) {
   const id = rid(12);
   const run = {
@@ -384,8 +612,12 @@ function streamRun(req, res, run) {
   req.on("close", cleanup);
 }
 
-const RUN_FIELDS = ["id", "userId", "bugId", "agentRunId", "mode", "engine", "status", "solved", "bestNodeId", "nodes", "usage", "latencyMs", "prUrl", "createdAt", "completedAt"];
-const publicRun = (r) => Object.fromEntries(RUN_FIELDS.map((k) => [k, r[k]]));
+const RUN_FIELDS = ["id", "userId", "bugId", "agentRunId", "mode", "engine", "status", "solved", "bestNodeId", "nodes", "usage", "latencyMs", "prUrl", "createdAt", "completedAt", "kind", "repo", "branch", "task", "source", "prNumber", "prBranch", "parentRunId", "filesChanged", "merged", "cost", "safety", "traceId", "langsmithUrl"];
+const publicRun = (r) => Object.fromEntries(RUN_FIELDS.map((k) => [k, r[k] === undefined ? null : r[k]]).map(([k, v]) => [k, k === "kind" && v === null ? "bug" : v]));
+
+function maskHook(u) {
+  return u.slice(0, 27) + "..." + u.slice(-4);
+}
 
 // ---------- routes ----------
 async function handle(req, res) {
@@ -487,10 +719,124 @@ async function handle(req, res) {
     return streamRun(req, res, run);
   }
 
+
+  // ----- github app install callback (public; state is bound to a user) -----
+  if (m === "GET" && p === "/api/github/callback") {
+    const uid = installStates.get(url.searchParams.get("state") || "");
+    if (!uid) {
+      res.writeHead(302, { Location: `${FRONTEND}/integrations?github=error&reason=bad_state` });
+      return res.end();
+    }
+    installStates.delete(url.searchParams.get("state"));
+    github.set(uid, { mode: "app", login: "mock-app-user", installationId: 4242 });
+    res.writeHead(302, { Location: `${FRONTEND}/integrations?github=connected` });
+    return res.end();
+  }
+  if (m === "GET" && p === "/__mock/slack") return json(res, 200, slackLog);
+
   // ----- everything below needs auth -----
   if (!p.startsWith("/api/")) return err(res, 404, "not found");
   const user = authUser(req);
   if (!user) return err(res, 401, "not authenticated");
+
+
+  // ----- github -----
+  const gh = github.get(user.id);
+  const ghStatus = () => ({
+    connected: !!gh,
+    mode: gh?.mode ?? null,
+    login: gh?.login ?? null,
+    avatarUrl: null,
+    installationId: gh?.installationId ?? null,
+    appConfigured: process.env.MOCK_GITHUB_APP === "1",
+    repoCount: gh ? DEMO_REPOS.length : 0,
+  });
+  if (m === "GET" && p === "/api/github/status") return json(res, 200, ghStatus());
+  if (m === "GET" && p === "/api/github/connect") {
+    if (process.env.MOCK_GITHUB_APP !== "1") return err(res, 503, "github app not configured");
+    const st = rid(10);
+    installStates.set(st, user.id);
+    return json(res, 200, { url: `${PUBLIC_BASE}/api/github/callback?installation_id=4242&setup_action=install&state=${st}` });
+  }
+  if (m === "POST" && p === "/api/github/demo") {
+    github.set(user.id, { mode: "demo", login: "demo-user", installationId: null });
+    return json(res, 200, { ...ghStatus(), connected: true, mode: "demo", login: "demo-user", repoCount: DEMO_REPOS.length });
+  }
+  if (m === "DELETE" && p === "/api/github") {
+    github.delete(user.id);
+    return json(res, 200, { message: "disconnected" });
+  }
+  if (m === "GET" && p === "/api/github/repos") {
+    if (!gh) return err(res, 409, "connect github first");
+    const q = (url.searchParams.get("q") || "").toLowerCase();
+    return json(
+      res,
+      200,
+      DEMO_REPOS.filter((r) => r.fullName.includes(q) || r.description.toLowerCase().includes(q)).map((r, i) => ({
+        fullName: r.fullName,
+        private: false,
+        defaultBranch: "main",
+        description: r.description,
+        language: r.language,
+        updatedAt: new Date(Date.now() - (i + 1) * 86400000 * 3).toISOString(),
+      }))
+    );
+  }
+  if (m === "GET" && (match = p.match(/^\/api\/github\/repos\/([^/]+)\/([^/]+)\/branches$/))) {
+    if (!gh) return err(res, 409, "connect github first");
+    if (!repoByName(`${match[1]}/${match[2]}`)) return err(res, 404, "repository not found or not granted to the app");
+    return json(res, 200, [{ name: "main", default: true }, { name: "develop", default: false }]);
+  }
+
+  // ----- slack -----
+  if (p === "/api/settings/slack") {
+    if (m === "GET") return json(res, 200, { configured: slackHooks.has(user.id), webhookUrlMasked: slackHooks.has(user.id) ? maskHook(slackHooks.get(user.id)) : null });
+    if (m === "PUT") {
+      const b = await readBody(req);
+      if (!b || typeof b.webhookUrl !== "string" || !/^https:\/\/hooks\.slack\.com\//.test(b.webhookUrl)) return err(res, 400, "webhook URL must start with https://hooks.slack.com/");
+      slackHooks.set(user.id, b.webhookUrl);
+      return json(res, 200, { configured: true, webhookUrlMasked: maskHook(b.webhookUrl) });
+    }
+    if (m === "DELETE") {
+      slackHooks.delete(user.id);
+      return json(res, 200, { configured: false });
+    }
+  }
+  if (m === "POST" && p === "/api/settings/slack/test") {
+    if (!slackHooks.has(user.id)) return err(res, 409, "set a Slack webhook first");
+    slackLog.push({ at: now(), kind: "test" });
+    return json(res, 200, { message: "test message sent" });
+  }
+  if (m === "POST" && p === "/api/slack/link-code") {
+    const code = rid(3).toUpperCase();
+    return json(res, 200, { code, expiresAt: new Date(Date.now() + 10 * 60000).toISOString() });
+  }
+
+  // ----- notifications -----
+  if (m === "GET" && p === "/api/notifications") return json(res, 200, notifications.filter((n) => n.userId === user.id).slice(0, 30));
+  if (m === "POST" && (match = p.match(/^\/api\/notifications\/([^/]+)\/read$/))) {
+    const n = notifications.find((x) => x.id === match[1] && x.userId === user.id);
+    if (n) n.read = true;
+    return json(res, 200, { ok: true });
+  }
+
+  // ----- tasks (repo runs) -----
+  if (m === "POST" && p === "/api/tasks") {
+    const b = await readBody(req);
+    if (!b) return err(res, 400, "invalid JSON body");
+    if (!gh) return err(res, 409, "connect github first");
+    const repo = repoByName(b.repo);
+    if (!repo) return err(res, 404, "repository not found or not granted to the app");
+    const task = typeof b.task === "string" ? b.task.trim() : "";
+    if (!task) return err(res, 400, "describe the problem to fix");
+    if (task.length > 4000) return err(res, 400, "task must be at most 4000 characters");
+    const hits = (taskHits.get(user.id) || []).filter((ts) => ts > Date.now() - 3600_000);
+    if (hits.length >= 10) return err(res, 429, "Task limit reached (10 per hour).");
+    hits.push(Date.now());
+    taskHits.set(user.id, hits);
+    const run = createRepoRun({ repo, branch: b.branch || "main", task, userId: user.id, autoPr: b.autoPr !== false });
+    return json(res, 201, { runId: run.id });
+  }
 
   if (m === "GET" && p === "/api/bugs") return json(res, 200, BUGS.map(publicBug));
 
@@ -512,12 +858,37 @@ async function handle(req, res) {
     const list = [...runs.values()].filter((r) => r.userId === user.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return json(res, 200, list.map(publicRun));
   }
-  if ((match = p.match(/^\/api\/runs\/([^/]+)(\/events|\/pr)?$/))) {
+  if ((match = p.match(/^\/api\/runs\/([^/]+)(\/events|\/pr|\/merge|\/followup)?$/))) {
     const run = runs.get(match[1]);
     if (!run || run.userId !== user.id) return err(res, 404, "run not found");
-    if (m === "GET" && !match[2]) return json(res, 200, publicRun(run));
-    if (m === "GET" && match[2] === "/events") return streamRun(req, res, run);
-    if (m === "POST" && match[2] === "/pr") {
+    const sub = match[2];
+    if (m === "GET" && !sub) return json(res, 200, publicRun(run));
+    if (m === "GET" && sub === "/events") return streamRun(req, res, run);
+    if (m === "GET" && sub === "/pr") {
+      const st = prStatus(run);
+      if (!st) return err(res, 404, "this run has no pull request");
+      return json(res, 200, st);
+    }
+    if (m === "POST" && sub === "/merge") {
+      const st = prStatus(run);
+      if (!st) return err(res, 404, "this run has no pull request");
+      if (!gh) return err(res, 409, "connect github first");
+      if (!st.mergeAllowed) return json(res, 409, { error: st.reason || "merge not allowed" });
+      run.merged = { by: gh.login, at: now() };
+      addNote(user.id, "merged", "Pull request merged", `${run.repo} #${run.prNumber} was merged by you`, run.id);
+      return json(res, 200, { merged: true, ...(st.checks.state === "none" ? { warning: "no checks configured" } : {}) });
+    }
+    if (m === "POST" && sub === "/followup") {
+      const b = await readBody(req);
+      const msg = typeof b?.message === "string" ? b.message.trim() : "";
+      if (!msg) return err(res, 400, "message is required");
+      if (!run.pr) return err(res, 409, "this run has no pull request to update");
+      const n = [...runs.values()].filter((r) => r.parentRunId === run.id).length;
+      if (n >= 5) return err(res, 429, "Follow-up limit reached (5 per run).");
+      const child = createRepoRun({ repo: repoByName(run.repo), branch: run.branch, task: run.task, userId: user.id, parent: run, followup: msg });
+      return json(res, 201, { runId: child.id });
+    }
+    if (m === "POST" && sub === "/pr") {
       if (run.prUrl) return json(res, 200, { url: run.prUrl });
       if (!run.solved) return err(res, 400, "run is not solved, there is no fix to open a pull request for");
       await new Promise((r) => setTimeout(r, 700 * SPEED));

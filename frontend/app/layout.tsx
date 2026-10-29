@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Geist, JetBrains_Mono } from "next/font/google";
-import SmoothScroll from "./_components/SmoothScroll";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -14,9 +13,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PatchLoop — bugs fixed, proven, before you see them",
+  title: { default: "PatchLoop: bug fixes proven by your tests", template: "%s | PatchLoop" },
   description:
-    "A team of AI agents proposes bug fixes in parallel, each tested in an isolated Nebius Sandbox. The tests decide, guardrails check every step, and a human merges the pull request.",
+    "Describe a bug. A team of AI agents reads your repo, proposes fixes in parallel sandboxes, and opens a pull request only when your tests pass. A human reviews and merges.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -25,14 +24,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${jetbrainsMono.variable} h-full dark`}
     >
-      <head>
-        <link
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
-          rel="stylesheet"
-        />
-      </head>
       <body className="min-h-full flex flex-col bg-bg text-on-surface antialiased selection:bg-primary/20 selection:text-primary">
-        <SmoothScroll />
         {children}
       </body>
     </html>

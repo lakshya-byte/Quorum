@@ -3,6 +3,7 @@
 import { memo } from "react";
 import type { RunNode } from "../../_lib/api";
 import { nodeTokens, nodeTone } from "../../_lib/runState";
+import { Icon } from "../../_ui";
 
 const TONE = {
   green: {
@@ -84,8 +85,8 @@ function NodeCardImpl({ node, isBest, isSelected, lessons, onSelect }: Props) {
             ) : null}
           </div>
           {isBest && (
-            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-primary text-black font-semibold">
-              <span className="material-symbols-outlined text-[13px]">trophy</span>
+            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-primary text-[#04120c] font-semibold">
+              <Icon name="trophy" size={13} />
               winner
             </span>
           )}
@@ -107,19 +108,26 @@ function NodeCardImpl({ node, isBest, isSelected, lessons, onSelect }: Props) {
         <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10.5px] text-on-surface-variant">
           {shortModel(node.model) && (
             <span className="inline-flex items-center gap-1">
-              <span className="material-symbols-outlined text-[13px]">neurology</span>
+              <Icon name="cpu" size={13} />
               {shortModel(node.model)}
             </span>
           )}
           {node.latency_ms != null && (
             <span className="inline-flex items-center gap-1">
-              <span className="material-symbols-outlined text-[13px]">timer</span>
+              <Icon name="clock" size={13} />
               {fmtMs(node.latency_ms)}
             </span>
           )}
           {typeof node.score === "number" && <span>score {node.score.toFixed(3)}</span>}
           {tokens > 0 && <span>{tokens.toLocaleString()} tok</span>}
         </div>
+
+        {node.files && Object.keys(node.files).length > 1 && (
+          <div className="mt-2 inline-flex items-center gap-1 rounded bg-surface-container-high px-1.5 py-0.5 font-mono text-[10.5px] text-on-surface-variant">
+            <Icon name="file" size={12} />
+            {Object.keys(node.files).length} files
+          </div>
+        )}
 
         {(policyBlocked || securityFlagged) && (
           <div className="mt-2.5 flex flex-wrap gap-1.5">
@@ -128,13 +136,13 @@ function NodeCardImpl({ node, isBest, isSelected, lessons, onSelect }: Props) {
                 title={(node.policy?.reasons || []).join("\n")}
                 className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wide px-1.5 py-0.5 rounded bg-error/15 text-error border border-error/40"
               >
-                <span className="material-symbols-outlined text-[13px]">block</span>
+                <Icon name="ban" size={13} />
                 policy blocked
               </span>
             )}
             {securityFlagged && (
               <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-400/15 text-amber-300 border border-amber-400/40">
-                <span className="material-symbols-outlined text-[13px]">gpp_maybe</span>
+                <Icon name="shield" size={13} />
                 security flagged
               </span>
             )}
@@ -149,7 +157,7 @@ function NodeCardImpl({ node, isBest, isSelected, lessons, onSelect }: Props) {
               key={l}
               className="flex items-start gap-1.5 rounded-lg px-2.5 py-1.5 bg-secondary/5 border border-secondary/20 text-[11.5px] leading-snug text-on-surface-variant"
             >
-              <span className="material-symbols-outlined text-[14px] text-secondary mt-px">psychology</span>
+              <Icon name="sparkles" size={14} />
               <span>
                 <span className="text-secondary font-medium">Critic: </span>
                 {l}

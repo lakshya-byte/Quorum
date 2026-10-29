@@ -1,20 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { errorMessage, runsApi, type Bug, type Engine, type Run } from "../../_lib/api";
+import { errorMessage, githubApi, runsApi, slackApi, type Bug, type GithubStatus, type Run, type SlackStatus } from "../../_lib/api";
 import { RequireAuth, useAuth } from "../../_lib/auth";
 import { isFinishedRun } from "../../_lib/useRunStream";
 import { fmtMs } from "../../_components/run/NodeCard";
-import { groupByTier } from "../_components/BugPicker";
-import { noticeKey } from "../runs/[id]/RunClient";
+import { Badge, Card, EmptyState, ErrorNote, Icon, LinkButton, PageHeader, Skeleton, StatusChip, cx, type RunStatus } from "../../_ui";
 
-function runStatus(r: Run): { label: string; cls: string } {
-  if (!isFinishedRun(r)) return { label: "running", cls: "text-primary border-primary/40 bg-primary/10" };
-  if (r.solved) return { label: "solved", cls: "text-primary border-primary/40 bg-primary/10" };
-  if ((r.status || "").toLowerCase() === "failed") return { label: "failed", cls: "text-error border-error/40 bg-error/10" };
-  return { label: "unsolved", cls: "text-amber-300 border-amber-400/40 bg-amber-400/10" };
+function statusOf(r: Run): RunStatus {
+  if (!isFinishedRun(r)) return "running";
+  if (r.solved) return "solved";
+  if ((r.status || "").toLowerCase() === "failed") return "failed";
+  return "unsolved";
 }
 
 function bestTests(r: Run): string {
@@ -25,116 +23,78 @@ function bestTests(r: Run): string {
 }
 
 function tokens(r: Run): string {
-  const u = r.usage;
-  const t = (u?.prompt_tokens || 0) + (u?.completion_tokens || 0);
+  const t = r.cost?.tokens || (r.usage?.prompt_tokens || 0) + (r.usage?.completion_tokens || 0);
   return t ? t.toLocaleString() : "–";
 }
 
-function NewFix({ bugs }: { bugs: Bug[] | null }) {
-  const router = useRouter();
-  const [bugId, setBugId] = useState("");
-  const [engine, setEngine] = useState<Engine>("graph");
-  const [replay, setReplay] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const effectiveBug = bugId || bugs?.[0]?.id || "";
+function when(iso: string) {
+  const d = new Date(iso);
+  const diff = Date.now() - d.getTime();
+  if (diff < 60_000) return "just now";
+  if (diff < 3600_000) return `${Math.floor(diff / 60_000)} min ago`;
+  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} h ago`;
+  return d.toLocaleDateString();
+}
 
-  const start = async () => {
-    if (!effectiveBug) return;
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const r = await runsApi.create(effectiveBug, engine, replay);
-      if (r.notice) {
-        setNotice(r.notice);
-        try {
-          sessionStorage.setItem(noticeKey(r.runId), r.notice);
-        } catch {
-          // storage unavailable
-        }
-      }
-      router.push(`/runs/${r.runId}`);
-    } catch (e) {
-      setError(errorMessage(e));
-      setBusy(false);
-    }
-  };
+function title(r: Run, bugs: Bug[] | null) {
+  if (r.kind === "repo") return r.task || r.repo || "Repository fix";
+  return bugs?.find((b) => b.id === r.bugId)?.title ?? r.bugId;
+}
 
+function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
-    <section className="rounded-xl border border-outline-variant/60 bg-[#0b0e15] p-4 sm:p-5 flex flex-col gap-4">
-      <h2 className="text-[13px] font-mono uppercase tracking-wider text-on-surface-variant flex items-center gap-1.5">
-        <span className="material-symbols-outlined text-[16px] text-primary">add_circle</span>
-        New fix
-      </h2>
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 md:items-end">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-mono text-on-surface-variant">Bug</span>
-          <select
-            value={effectiveBug}
-            onChange={(e) => setBugId(e.target.value)}
-            disabled={!bugs}
-            data-testid="bug-select"
-            className="w-full px-3 py-2.5 bg-surface-container-low border border-white/10 rounded-lg text-[13px] text-on-surface focus:outline-none focus:border-primary"
-          >
-            {!bugs && <option>Loading bugs…</option>}
-            {bugs &&
-              groupByTier(bugs).map(([tier, list]) => (
-                <optgroup key={tier} label={tier}>
-                  {list.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.title}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-          </select>
-        </label>
-        <div className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-mono text-on-surface-variant">Engine</span>
-          <div className="inline-flex rounded-lg border border-white/10 p-0.5 bg-surface-container-low" role="radiogroup">
-            {(
-              [
-                ["graph", "Agent team"],
-                ["loop", "Loop"],
-              ] as [Engine, string][]
-            ).map(([v, l]) => (
-              <button
-                key={v}
-                type="button"
-                role="radio"
-                aria-checked={engine === v}
-                onClick={() => setEngine(v)}
-                className={`px-3 py-2 rounded-md text-[12.5px] transition-colors ${engine === v ? "bg-surface-bright text-white" : "text-on-surface-variant hover:text-white"}`}
-              >
-                {l}
-              </button>
-            ))}
-          </div>
+    <Card className="p-4">
+      <div className="text-[12.5px] text-on-surface-variant">{label}</div>
+      <div className="mt-1 text-[28px] font-semibold leading-none tracking-tight text-white tabular-nums">{value}</div>
+      {hint && <div className="mt-1.5 text-[12px] text-text-subtle">{hint}</div>}
+    </Card>
+  );
+}
+
+function Checklist({ gh, slack, runs }: { gh: GithubStatus | null; slack: SlackStatus | null; runs: Run[] | null }) {
+  const items = [
+    { done: !!gh?.connected, title: "Connect GitHub", body: "Install the GitHub App, or use the offline demo account.", href: "/integrations", cta: "Connect" },
+    { done: !!runs && runs.some((r) => r.kind === "repo"), title: "Fix your first bug", body: "Pick a repository and describe the problem.", href: "/new", cta: "Start", locked: !gh?.connected },
+    { done: !!slack?.configured, title: "Add Slack (optional)", body: "Get a message when a run finishes.", href: "/integrations", cta: "Set up" },
+  ];
+  const doneCount = items.filter((i) => i.done).length;
+  if (gh && slack && runs && doneCount === items.length) return null;
+  return (
+    <Card className="p-5" data-testid="checklist">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-[15px] font-semibold text-white">Get set up</h2>
+          <p className="text-[13px] text-on-surface-variant">{doneCount} of {items.length} done</p>
         </div>
-        <label className="flex items-center gap-2 h-[42px] px-3 rounded-lg border border-white/10 bg-surface-container-low cursor-pointer select-none">
-          <input type="checkbox" checked={replay} onChange={(e) => setReplay(e.target.checked)} className="accent-[#10b981] w-4 h-4" />
-          <span className="text-[12.5px] text-on-surface">Replay a recorded run</span>
-        </label>
+        <div className="h-1.5 w-32 overflow-hidden rounded-full bg-surface-container-high" aria-hidden>
+          <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${(doneCount / items.length) * 100}%` }} />
+        </div>
       </div>
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-        <button
-          onClick={start}
-          disabled={busy || !effectiveBug}
-          data-testid="new-fix"
-          className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-primary text-black text-[13.5px] font-semibold hover:bg-[#34d399] disabled:opacity-60"
-        >
-          <span className={`material-symbols-outlined text-[18px] ${busy ? "animate-spin" : ""}`}>{busy ? "progress_activity" : "play_arrow"}</span>
-          {busy ? "Starting…" : "Start fix"}
-        </button>
-        <span className="text-[12px] text-on-surface-variant">
-          {engine === "graph" ? "Triage, parallel proposers, critic and reviewer, with guardrails." : "Single-agent loop (older engine)."}
-        </span>
-      </div>
-      {notice && <p className="text-[13px] text-secondary">{notice}</p>}
-      {error && <p className="text-[13px] text-error">{error}</p>}
-    </section>
+      <ol className="mt-4 grid gap-3 md:grid-cols-3">
+        {items.map((it, i) => (
+          <li key={it.title} className={cx("flex flex-col gap-2 rounded-lg border p-4", it.done ? "border-primary/30 bg-primary/5" : "border-border bg-surface-container-low")}>
+            <div className="flex items-center gap-2">
+              <span className={cx("flex h-6 w-6 items-center justify-center rounded-full border text-[12px] font-semibold", it.done ? "border-primary bg-primary text-[#04120c]" : "border-border-strong text-on-surface-variant")}>
+                {it.done ? <Icon name="check" size={13} strokeWidth={3} /> : i + 1}
+              </span>
+              <span className="text-[14px] font-medium text-white">{it.title}</span>
+            </div>
+            <p className="text-[13px] leading-5 text-on-surface-variant">{it.body}</p>
+            {!it.done && (
+              <div className="mt-auto pt-1">
+                {it.locked ? (
+                  <span className="text-[12.5px] text-text-subtle">Connect GitHub first</span>
+                ) : (
+                  <Link href={it.href} className="focus-ring inline-flex items-center gap-1 rounded text-[13px] font-medium text-primary hover:underline">
+                    {it.cta} <Icon name="arrow-right" size={13} />
+                  </Link>
+                )}
+              </div>
+            )}
+          </li>
+        ))}
+      </ol>
+    </Card>
   );
 }
 
@@ -142,6 +102,8 @@ function DashboardInner() {
   const { user } = useAuth();
   const [bugs, setBugs] = useState<Bug[] | null>(null);
   const [runs, setRuns] = useState<Run[] | null>(null);
+  const [gh, setGh] = useState<GithubStatus | null>(null);
+  const [slack, setSlack] = useState<SlackStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -154,10 +116,9 @@ function DashboardInner() {
   }, []);
 
   useEffect(() => {
-    runsApi
-      .bugs()
-      .then((b) => setBugs(b || []))
-      .catch((e) => setError(errorMessage(e)));
+    runsApi.bugs().then((b) => setBugs(b || [])).catch(() => setBugs([]));
+    githubApi.status().then(setGh).catch(() => {});
+    slackApi.get().then(setSlack).catch(() => {});
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch
     load();
   }, [load]);
@@ -169,110 +130,140 @@ function DashboardInner() {
     return () => clearInterval(t);
   }, [anyRunning, load]);
 
-  const bugTitle = (id: string) => bugs?.find((b) => b.id === id)?.title ?? id;
+  const total = runs?.length ?? 0;
+  const solved = (runs || []).filter((r) => r.solved).length;
+  const prs = (runs || []).filter((r) => r.prUrl).length;
+  const merged = (runs || []).filter((r) => r.merged).length;
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl text-white font-semibold tracking-tight">Dashboard</h1>
-        <p className="mt-1 text-[13.5px] text-on-surface-variant">
-          {user?.companyName ? `${user.companyName} · ` : ""}Your fix runs. Agents propose; tests decide; you merge.
-        </p>
+      <PageHeader
+        title="Dashboard"
+        description={`${user?.companyName ? user.companyName + ". " : ""}Agents propose, your tests decide, you merge.`}
+        actions={
+          <LinkButton href="/new" icon="plus">
+            Fix a bug
+          </LinkButton>
+        }
+      />
+
+      <Checklist gh={gh} slack={slack} runs={runs} />
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat label="Runs" value={runs ? total : "–"} />
+        <Stat label="Solved" value={runs ? solved : "–"} hint={runs && total ? `${Math.round((solved / total) * 100)}% of your runs` : undefined} />
+        <Stat label="Pull requests" value={runs ? prs : "–"} />
+        <Stat label="Merged by you" value={runs ? merged : "–"} />
       </div>
 
-      <NewFix bugs={bugs} />
-
-      <section className="rounded-xl border border-outline-variant/60 bg-[#0b0e15] overflow-hidden">
-        <div className="px-4 sm:px-5 py-3 border-b border-outline-variant/50 flex items-center justify-between">
-          <h2 className="text-[13px] font-mono uppercase tracking-wider text-on-surface-variant">My runs</h2>
-          <button onClick={load} className="text-[12px] text-on-surface-variant hover:text-white inline-flex items-center gap-1">
-            <span className="material-symbols-outlined text-[15px]">refresh</span>
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
+          <h2 className="text-[15px] font-semibold text-white">Run history</h2>
+          <button onClick={load} className="focus-ring inline-flex items-center gap-1.5 rounded px-2 py-1 text-[13px] text-on-surface-variant hover:text-white">
+            <Icon name="refresh" size={14} />
             Refresh
           </button>
         </div>
-        {error && <p className="px-5 py-3 text-[13px] text-error">{error}</p>}
+        {error && <ErrorNote className="m-4">{error}</ErrorNote>}
         {!runs ? (
-          <div className="p-5 flex flex-col gap-2">
+          <div className="flex flex-col gap-2 p-5">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-10 rounded bg-surface-container-low animate-pulse" />
+              <Skeleton key={i} className="h-11" />
             ))}
           </div>
         ) : runs.length === 0 ? (
-          <p className="px-5 py-10 text-center text-[13px] text-on-surface-variant">No runs yet. Start one above.</p>
+          <EmptyState
+            icon="bug"
+            title="No runs yet"
+            description="Describe a bug in one of your repositories and PatchLoop will try to fix it. You will see every attempt live."
+            action={
+              <LinkButton href="/new" icon="plus">
+                Fix your first bug
+              </LinkButton>
+            }
+          />
         ) : (
           <>
-            {/* desktop table */}
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-left text-[13px]">
-                <thead className="font-mono text-[10.5px] uppercase tracking-wider text-on-surface-variant">
-                  <tr className="border-b border-outline-variant/40">
-                    {["Status", "Bug", "Engine", "Tests", "Tokens", "Latency", "PR", "Started"].map((h) => (
-                      <th key={h} className="px-4 py-2.5 font-normal">
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full text-left text-[13px]" data-testid="runs-table">
+                <thead>
+                  <tr className="border-b border-border text-[12px] text-on-surface-variant">
+                    {["Status", "Problem", "Source", "Tests", "Cost", "Speed", "Safety", "PR", "Started"].map((h) => (
+                      <th key={h} scope="col" className="whitespace-nowrap px-4 py-2.5 font-medium">
                         {h}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {runs.map((r) => {
-                    const s = runStatus(r);
-                    return (
-                      <tr key={r.id} className="border-b border-outline-variant/25 hover:bg-surface-container-low/60">
-                        <td className="px-4 py-2.5">
-                          <span className={`inline-flex px-2 py-0.5 rounded-full border font-mono text-[10.5px] ${s.cls}`}>{s.label}</span>
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <Link href={`/runs/${r.id}`} className="text-white hover:text-primary font-mono text-[12.5px]">
-                            {bugTitle(r.bugId)}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-2.5 font-mono text-[12px] text-on-surface-variant">
-                          {r.engine === "graph" ? "agent team" : r.engine} · {r.mode}
-                        </td>
-                        <td className="px-4 py-2.5 font-mono text-[12px] text-on-surface">{bestTests(r)}</td>
-                        <td className="px-4 py-2.5 font-mono text-[12px] text-on-surface-variant">{tokens(r)}</td>
-                        <td className="px-4 py-2.5 font-mono text-[12px] text-on-surface-variant">{fmtMs(r.latencyMs)}</td>
-                        <td className="px-4 py-2.5">
-                          {r.prUrl ? (
-                            <a href={r.prUrl} target="_blank" rel="noopener noreferrer" className="text-primary text-[12px] inline-flex items-center gap-1">
-                              <span className="material-symbols-outlined text-[14px]">merge</span>PR
-                            </a>
-                          ) : (
-                            <span className="text-outline">–</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 font-mono text-[11.5px] text-on-surface-variant whitespace-nowrap">
-                          {new Date(r.createdAt).toLocaleString()}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {runs.map((r) => (
+                    <tr key={r.id} className="border-b border-border/60 transition-colors last:border-0 hover:bg-surface-container-low">
+                      <td className="px-4 py-3">
+                        <StatusChip status={statusOf(r)} />
+                      </td>
+                      <td className="max-w-[300px] px-4 py-3">
+                        <Link href={`/runs/${r.id}`} className="focus-ring block truncate rounded font-medium text-white hover:text-primary" title={title(r, bugs)}>
+                          {title(r, bugs)}
+                        </Link>
+                        <span className="block truncate font-mono text-[11.5px] text-text-subtle">
+                          {r.kind === "repo" ? `${r.repo} · ${r.branch}` : "demo bug"}
+                          {r.traceId ? ` · ${r.traceId}` : ""}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-on-surface-variant">{r.source || "web"}</td>
+                      <td className="px-4 py-3 font-mono text-[12.5px] text-on-surface">{bestTests(r)}</td>
+                      <td className="px-4 py-3 font-mono text-[12.5px] text-on-surface-variant" title="Tokens used">{tokens(r)} tok</td>
+                      <td className="px-4 py-3 font-mono text-[12.5px] text-on-surface-variant">{fmtMs(r.latencyMs)}</td>
+                      <td className="px-4 py-3">
+                        {r.safety ? (
+                          <span title={`policy ${r.safety.policy}, security ${r.safety.security}, guard ${r.safety.guard}`}>
+                            <Badge tone={Object.values(r.safety).every((v) => v === "pass") ? "success" : "warning"} icon="shield-check">
+                              {Object.values(r.safety).every((v) => v === "pass") ? "all pass" : "flagged"}
+                            </Badge>
+                          </span>
+                        ) : (
+                          <span className="text-text-subtle">–</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {r.merged ? (
+                          <Badge tone="info" icon="git-pr">merged</Badge>
+                        ) : r.prUrl ? (
+                          <a href={r.prUrl} target="_blank" rel="noopener noreferrer" className="focus-ring inline-flex items-center gap-1 rounded text-primary hover:underline">
+                            {r.prNumber ? `#${r.prNumber}` : "PR"} <Icon name="external" size={12} />
+                          </a>
+                        ) : (
+                          <span className="text-text-subtle">–</span>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-on-surface-variant">{when(r.createdAt)}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
-            {/* mobile cards */}
-            <ul className="md:hidden divide-y divide-outline-variant/30">
-              {runs.map((r) => {
-                const s = runStatus(r);
-                return (
-                  <li key={r.id}>
-                    <Link href={`/runs/${r.id}`} className="block px-4 py-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono text-[12.5px] text-white truncate">{bugTitle(r.bugId)}</span>
-                        <span className={`shrink-0 px-2 py-0.5 rounded-full border font-mono text-[10.5px] ${s.cls}`}>{s.label}</span>
-                      </div>
-                      <div className="mt-1 font-mono text-[11px] text-on-surface-variant">
-                        {r.engine} · tests {bestTests(r)} · {tokens(r)} tok · {fmtMs(r.latencyMs)}
-                        {r.prUrl ? " · PR" : ""}
-                      </div>
-                    </Link>
-                  </li>
-                );
-              })}
+            <ul className="divide-y divide-border md:hidden">
+              {runs.map((r) => (
+                <li key={r.id}>
+                  <Link href={`/runs/${r.id}`} className="focus-ring block px-4 py-3.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="line-clamp-2 text-[14px] font-medium text-white">{title(r, bugs)}</span>
+                      <StatusChip status={statusOf(r)} />
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-x-3 font-mono text-[11.5px] text-on-surface-variant">
+                      <span>{r.kind === "repo" ? r.repo : "demo bug"}</span>
+                      <span>tests {bestTests(r)}</span>
+                      <span>{tokens(r)} tok</span>
+                      <span>{fmtMs(r.latencyMs)}</span>
+                      {r.prNumber ? <span>PR #{r.prNumber}</span> : null}
+                    </div>
+                  </Link>
+                </li>
+              ))}
             </ul>
           </>
         )}
-      </section>
+      </Card>
     </div>
   );
 }
