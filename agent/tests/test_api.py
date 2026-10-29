@@ -138,3 +138,12 @@ def test_pr_without_github_config_is_a_clear_503(client: TestClient) -> None:
     resp = client.post(f"/runs/{run_id}/pr", headers=HEADERS)
     assert resp.status_code == 503
     assert "GITHUB_TOKEN" in resp.json()["detail"]
+
+
+def test_unset_secret_fails_closed(tmp_path: Path) -> None:
+    settings = Settings(shared_secret="", mode="fake", runs_dir=tmp_path)
+    with TestClient(create_app(settings)) as c:
+        assert c.get("/health").status_code == 200
+        assert c.get("/bugs").status_code == 401
+        assert c.get("/bugs", headers={"X-Agent-Secret": ""}).status_code == 401
+        assert c.get("/bugs", headers={"X-Agent-Secret": "change-me"}).status_code == 401

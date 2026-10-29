@@ -163,6 +163,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         prewarm = None
         if settings.mode == "live" and settings.sandbox_ready:
             prewarm = asyncio.create_task(registry.nebius().prepare())  # tool image off the request path
+        if not settings.shared_secret:
+            log.error("AGENT_SHARED_SECRET is not set: every route except /health will answer 401")
         log.info("agent ready mode=%s engine=%s guard=%s langsmith=%s newrelic=%s",
                  settings.mode, settings.engine, guard.backend, langsmith_on, newrelic_on)
         yield
