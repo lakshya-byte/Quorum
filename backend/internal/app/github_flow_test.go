@@ -653,3 +653,30 @@ func TestCallbackRejectsInstallationsTheUserDoesNotOwn(t *testing.T) {
 		t.Fatalf("repos: %d", st)
 	}
 }
+
+// A follow-up pushes to the same PR: merging either run marks the whole chain merged.
+func TestMergeMarksTheWholeFollowupChain(t *testing.T) {
+	e := newMemEnv(t, nil)
+	e.api("alice", "POST", "/api/github/demo", nil)
+	id := e.startTask("alice", "demo/shop-api", "percentage coupons also discount shipping")
+	parent := e.waitCompleted("alice", id)
+	st, m, raw := e.api("alice", "POST", "/api/runs/"+id+"/followup", map[string]any{"message": "also add a test"})
+	if st != 201 {
+		t.Fatalf("followup: %d %s", st, raw)
+	}
+	child := e.waitCompleted("alice", m["runId"].(string))
+	if child["prNumber"] != parent["prNumber"] || child["prBranch"] != parent["prBranch"] {
+		t.Skipf("fake agent gave the follow-up another PR (%v vs %v)", child["prNumber"], parent["prNumber"])
+	}
+	if st, m, _ := e.api("alice", "POST", "/api/runs/"+child["id"].(string)+"/merge", map[string]any{}); st != 200 {
+		t.Fatalf("merge child: %d %v", st, m)
+	}
+	_, p, _ := e.api("alice", "GET", "/api/runs/"+id, nil)
+	if p["merged"] == nil {
+		t.Fatalf("parent run not marked merged: %v", p["merged"])
+	}
+	_, pr, _ := e.api("alice", "GET", "/api/runs/"+id+"/pr", nil)
+	if pr["state"] != "merged" {
+		t.Fatalf("parent PR card state: %v", pr["state"])
+	}
+}

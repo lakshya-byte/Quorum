@@ -188,6 +188,12 @@ func (m *MergeService) Merge(ctx context.Context, run *models.Run, userID, metho
 	if err := m.runs.SetMerged(ctx, run.ID.Hex(), by, at); err != nil {
 		return nil, err
 	}
+	// The PR is one object: its other runs (the original and every follow-up) show it as merged too.
+	if run.PRNumber > 0 {
+		if err := m.runs.SetMergedForPR(ctx, run.UserID, run.Repo, run.PRBranch, run.PRNumber, by, at); err != nil {
+			return nil, err
+		}
+	}
 	run.Merged = &models.Merged{By: by, At: at}
 	observability.RecordEvent(ctx, m.svc.nr, "PRMerged", map[string]any{"runId": run.ID.Hex(), "by": by, "method": method, "fake": res.Fake})
 	m.svc.NotifyMerged(ctx, run)

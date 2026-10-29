@@ -19,6 +19,8 @@ type RunStore interface {
 	SetStatus(ctx context.Context, id string, status string) error
 	SetPR(ctx context.Context, id string, url string, number int, branch string) error
 	SetMerged(ctx context.Context, id string, by string, at time.Time) error
+	// SetMergedForPR marks every run of the same user that owns this PR (a run and its follow-ups) as merged.
+	SetMergedForPR(ctx context.Context, userID, repo, branch string, number int, by string, at time.Time) error
 	SetSlackSent(ctx context.Context, id string) error
 	SetSlackRoot(ctx context.Context, id string, rootTS string) error
 	FindBySlackThread(ctx context.Context, channel, threadTS string) (*models.Run, error)

@@ -120,6 +120,16 @@ func (s *Store) SetPR(ctx context.Context, id, url string, number int, branch st
 func (s *Store) SetMerged(ctx context.Context, id, by string, at time.Time) error {
 	return s.with(id, func(r *models.Run) { r.Merged = &models.Merged{By: by, At: at} })
 }
+func (s *Store) SetMergedForPR(ctx context.Context, userID, repo, branch string, number int, by string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.runs {
+		if r.UserID == userID && r.Repo == repo && r.PRNumber == number && r.PRBranch == branch {
+			r.Merged = &models.Merged{By: by, At: at}
+		}
+	}
+	return nil
+}
 func (s *Store) SetSlackSent(ctx context.Context, id string) error {
 	return s.with(id, func(r *models.Run) { r.SlackSent = true })
 }
