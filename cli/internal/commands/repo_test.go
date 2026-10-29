@@ -305,7 +305,7 @@ func TestConnectGitHubPollsUntilInstalled(t *testing.T) {
 	}
 	// Demo account.
 	out, _, err = run(t, "connect", "github", "--demo")
-	if err != nil || !strings.Contains(out, "demo/inventory-api") {
+	if err != nil || !strings.Contains(out, "demo/shop-api") {
 		t.Fatalf("demo: %v %s", err, out)
 	}
 	if _, _, err := run(t, "connect", "gitlab"); err == nil {
