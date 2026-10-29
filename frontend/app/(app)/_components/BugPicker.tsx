@@ -1,6 +1,7 @@
 "use client";
 
 import type { Bug } from "../../_lib/api";
+import { Badge, cx, type Tone } from "../../_ui";
 
 const TIER_ORDER = ["easy", "medium", "hard"];
 
@@ -18,27 +19,15 @@ export function groupByTier(bugs: Bug[]): [string, Bug[]][] {
   });
 }
 
-const TIER_CLS: Record<string, string> = {
-  easy: "text-primary border-primary/30",
-  medium: "text-secondary border-secondary/30",
-  hard: "text-amber-300 border-amber-400/30",
-};
+const TIER_TONE: Record<string, Tone> = { easy: "success", medium: "info", hard: "warning" };
 
-export default function BugPicker({
-  bugs,
-  selected,
-  onSelect,
-}: {
-  bugs: Bug[];
-  selected: string | null;
-  onSelect: (id: string) => void;
-}) {
+export default function BugPicker({ bugs, selected, onSelect }: { bugs: Bug[]; selected: string | null; onSelect: (id: string) => void }) {
   return (
-    <div className="flex flex-col gap-4" role="radiogroup" aria-label="Choose a bug">
+    <div className="flex flex-col gap-5" role="radiogroup" aria-label="Choose a bug">
       {groupByTier(bugs).map(([tier, list]) => (
-        <div key={tier} className="flex flex-col gap-2">
-          <div className="font-mono text-[10.5px] uppercase tracking-wider text-on-surface-variant">{tier}</div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+        <div key={tier} className="flex flex-col gap-2.5">
+          <div className="text-[12px] font-medium capitalize text-on-surface-variant">{tier}</div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {list.map((b) => {
               const active = selected === b.id;
               return (
@@ -49,19 +38,16 @@ export default function BugPicker({
                   aria-checked={active}
                   data-bug-id={b.id}
                   onClick={() => onSelect(b.id)}
-                  className={`text-left rounded-xl border p-3.5 transition-all ${
-                    active
-                      ? "border-primary/70 bg-primary/5 ring-1 ring-primary/40"
-                      : "border-outline-variant/60 bg-surface-container-low hover:border-outline hover:bg-surface-container"
-                  }`}
+                  className={cx(
+                    "focus-ring rounded-xl border p-4 text-left transition-colors",
+                    active ? "border-primary/60 bg-primary/5" : "border-border bg-surface-container-low hover:border-border-strong hover:bg-surface-container"
+                  )}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <span className="font-mono text-[13px] text-white leading-snug">{b.title}</span>
-                    <span className={`shrink-0 text-[9.5px] font-mono uppercase px-1.5 py-0.5 rounded border ${TIER_CLS[tier] || "text-on-surface-variant border-outline-variant/60"}`}>
-                      {tier}
-                    </span>
+                    <span className="text-[14px] font-medium leading-snug text-white">{b.title}</span>
+                    <Badge tone={TIER_TONE[tier] || "neutral"}>{tier}</Badge>
                   </div>
-                  <p className="mt-1.5 text-[12px] leading-snug text-on-surface-variant line-clamp-2">{b.issue}</p>
+                  <p className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-on-surface-variant">{b.issue}</p>
                 </button>
               );
             })}

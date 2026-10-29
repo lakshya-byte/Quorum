@@ -33,6 +33,8 @@ type Agent struct {
 
 	mu           sync.Mutex
 	runs         map[string]runInfo
+	repoRuns     map[string]*repoRun
+	prSeq        int
 	Traceparents []string // traceparent headers seen (for tests)
 	Created      []map[string]any
 }
@@ -45,7 +47,7 @@ func New(opts Options) *Agent {
 	if opts.Delay == 0 {
 		opts.Delay = 100 * time.Millisecond
 	}
-	return &Agent{opts: opts, runs: map[string]runInfo{}}
+	return &Agent{opts: opts, runs: map[string]runInfo{}, repoRuns: map[string]*repoRun{}}
 }
 
 var Bugs = []map[string]any{
@@ -108,7 +110,16 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, Bugs)
 	case r.Method == http.MethodPost && path == "runs":
 		a.createRun(w, r)
+	case r.Method == http.MethodPost && path == "repo-runs":
+		a.createRepoRun(w, r)
 	case r.Method == http.MethodGet && len(parts) == 3 && parts[0] == "runs" && parts[2] == "events":
+		a.mu.Lock()
+		rr := a.repoRuns[parts[1]]
+		a.mu.Unlock()
+		if rr != nil {
+			a.streamRepo(w, r, rr)
+			return
+		}
 		a.stream(w, r, parts[1])
 	case r.Method == http.MethodGet && len(parts) == 2 && parts[0] == "runs":
 		a.mu.Lock()
@@ -122,7 +133,12 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && len(parts) == 3 && parts[0] == "runs" && parts[2] == "pr":
 		a.mu.Lock()
 		info, ok := a.runs[parts[1]]
+		rr := a.repoRuns[parts[1]]
 		a.mu.Unlock()
+		if rr != nil {
+			a.openRepoPR(w, r, rr)
+			return
+		}
 		if !ok {
 			writeJSON(w, 404, map[string]any{"detail": "run not found"})
 			return

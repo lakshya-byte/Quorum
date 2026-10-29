@@ -31,6 +31,29 @@ REAL_MODES = ("hybrid", "live")
 REPLAYED_TYPES = ("guard", "triage", "round", "node", "critic", "done", "error")
 
 
+def safety_summary(events: list[dict[str, Any]], best: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Guard, policy and security decisions of a run in one object (for `done` and the completion callback)."""
+    guards = [e["data"] for e in events if e["type"] == "guard"]
+
+    def verdict(stage: str) -> str:
+        found = [g for g in guards if g.get("stage") == stage]
+        return found[-1]["verdict"] if found else "n/a"
+
+    nodes = [e["data"] for e in events if e["type"] == "node" and e["data"].get("id", 0) != 0]
+    blocked = [n for n in nodes if not n.get("policy", {}).get("ok", True)]
+    sec_blocked = [n for n in nodes if not n.get("security", {}).get("ok", True)]
+    scanned = any(n.get("security", {}).get("scanned") for n in nodes)
+    best = best or {}
+    return {
+        "guard": {"input": verdict("input"), "output": verdict("output")},
+        "policy": {"candidates": len(nodes), "blocked": len(blocked),
+                   "reasons": list(dict.fromkeys(r for n in blocked for r in n["policy"]["reasons"]))[:5],
+                   "best_ok": best.get("policy", {}).get("ok", True) if best else None},
+        "security": {"scanner": "bandit", "scanned": scanned, "blocked": len(sec_blocked),
+                     "best_ok": best.get("security", {}).get("ok", True) if best else None},
+    }
+
+
 @dataclass
 class Run:
     run_id: str
@@ -50,11 +73,42 @@ class Run:
     t0: float = field(default_factory=time.monotonic)
     ttfn_ms: int | None = None
     latency_ms: int | None = None
+    # repo runs (contract: /repo-runs). `_token` is a per-run credential: memory only, never in events/records/logs.
+    kind: str = "bug"  # bug | repo
+    repo: str = ""
+    branch: str = ""
+    task: str = ""
+    source: str = ""
+    issue_ref: int | None = None
+    run_url: str = ""
+    demo: bool = False
+    cause: str = ""
+    repro_path: str = ""
+    followup: dict[str, Any] | None = None
+    pr_number: int | None = None
+    pr_branch: str = ""
+    pr_fake: bool = False
+    files_changed: int = 0
+    prices: tuple[float, float] = (0.0, 0.0)
+    ttfe_ms: int | None = None
+    _token: str = field(default="", repr=False)
+    _pr_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _signal: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
     @property
     def finished(self) -> bool:
         return self.status != "running"
+
+    def usage_report(self, usage: dict[str, Any], latency_ms: int | None) -> dict[str, Any]:
+        """usage + total tokens + estimated cost (only when prices are configured) + latency."""
+        total = int(usage.get("prompt_tokens", 0)) + int(usage.get("completion_tokens", 0))
+        pin, pout = self.prices
+        cost = None
+        if pin or pout:
+            cost = round((int(usage.get("prompt_tokens", 0)) * pin + int(usage.get("completion_tokens", 0)) * pout)
+                         / 1_000_000, 6)
+        return {**usage, "total_tokens": total, "cost_usd": cost, "latency_ms": latency_ms,
+                "time_to_first_event_ms": self.ttfe_ms}
 
     def _notify(self) -> None:
         sig, self._signal = self._signal, asyncio.Event()
@@ -65,9 +119,15 @@ class Run:
         elapsed = int((time.monotonic() - self.t0) * 1000)
         if kind == "node" and self.ttfn_ms is None:
             self.ttfn_ms = elapsed
+        if self.ttfe_ms is None and kind != "run_started":
+            self.ttfe_ms = elapsed
         if kind == "done":
             data = {**data, "latency_ms": data.get("latency_ms", elapsed),
-                    "time_to_first_node_ms": data.get("time_to_first_node_ms", self.ttfn_ms)}
+                    "time_to_first_node_ms": data.get("time_to_first_node_ms", self.ttfn_ms),
+                    "time_to_first_event_ms": self.ttfe_ms,
+                    "safety": data.get("safety") or safety_summary(self.events, data.get("best"))}
+            if self.mode != "replay":
+                data["usage"] = self.usage_report(data.get("usage") or new_usage(), data["latency_ms"])
             self.latency_ms = data["latency_ms"]
         self.events.append({"type": kind, "data": data})
         self._notify()
@@ -94,7 +154,7 @@ class Run:
         """Completion callback body (contract): existing fields + engine + latency_ms."""
         done = self.done_event()
         best = done.get("best") or {}
-        return {
+        out = {
             "run_id": self.run_id,
             "user_id": self.user_id,
             "bug_id": self.bug_id,
@@ -106,20 +166,41 @@ class Run:
             "usage": done.get("usage", new_usage()),
             "latency_ms": done.get("latency_ms", self.latency_ms),
         }
+        if self.kind == "repo":
+            out.update(self.repo_fields())
+            out.update({
+                "kind": "repo", "pr_url": self.pr_url, "pr_number": self.pr_number, "pr_branch": self.pr_branch,
+                "files_changed": self.files_changed, "safety": safety_summary(self.events, best),
+                "status": self.status, "source": self.source, "issue_ref": self.issue_ref,
+            })
+        return out
+
+    def repo_fields(self) -> dict[str, Any]:
+        return {"repo": self.repo, "branch": self.branch, "task": self.task}
 
     def public(self) -> dict[str, Any]:
-        return {
+        out = {
             "run_id": self.run_id, "bug_id": self.bug_id, "mode": self.mode, "engine": self.engine,
             "status": self.status, "events": self.events, "pr_draft": self.pr_draft, "pr_url": self.pr_url,
             "replay_of": self.replay_of,
         }
+        if self.kind == "repo":
+            out.update({**self.repo_fields(), "kind": "repo", "pr_number": self.pr_number,
+                        "pr_branch": self.pr_branch, "files_changed": self.files_changed, "source": self.source})
+        return out
 
     def to_record(self) -> dict[str, Any]:
-        return {
+        rec = {
             **self.summary(), "status": self.status, "created_at": self.created_at,
             "replay_of": self.replay_of, "events": self.events, "pr_draft": self.pr_draft,
             "pr_url": self.pr_url, "trace_id": self.trace_id,
         }
+        if self.kind == "repo":  # NEVER the token: only what is needed to open or update the PR later
+            rec.update({"kind": "repo", "demo": self.demo, "cause": self.cause, "repro_path": self.repro_path,
+                        "run_url": self.run_url, "followup_meta": bool(self.followup), "pr_fake": self.pr_fake,
+                        "followup_pr": (self.followup or {}).get("pr_branch") and
+                        {"pr_branch": self.followup["pr_branch"], "pr_number": self.followup.get("pr_number")}})
+        return rec
 
     @classmethod
     def from_record(cls, rec: dict[str, Any]) -> Run:
@@ -129,6 +210,12 @@ class Run:
             created_at=rec.get("created_at", 0.0), events=rec.get("events", []),
             pr_draft=rec.get("pr_draft"), pr_url=rec.get("pr_url"), trace_id=rec.get("trace_id", ""),
             latency_ms=rec.get("latency_ms"),
+            kind=rec.get("kind", "bug"), repo=rec.get("repo", ""), branch=rec.get("branch", ""),
+            task=rec.get("task", ""), source=rec.get("source", ""), issue_ref=rec.get("issue_ref"),
+            run_url=rec.get("run_url", ""), demo=bool(rec.get("demo")), cause=rec.get("cause", ""),
+            repro_path=rec.get("repro_path", ""), pr_number=rec.get("pr_number"), pr_branch=rec.get("pr_branch", ""),
+            pr_fake=bool(rec.get("pr_fake")), files_changed=rec.get("files_changed", 0),
+            followup=rec.get("followup_pr") or None,
         )
 
 
@@ -141,6 +228,12 @@ class RunRegistry:
         self._nebius: NebiusSandbox | None = None
         self._local = LocalSandbox(LOCAL_TEST_TIMEOUT, settings.sandbox_concurrency)
         self._tasks: set[asyncio.Task[None]] = set()
+        # injectable for tests: how repos are downloaded and how GitHub is called (no network in unit tests)
+        from app.repo_loader import fetch_github
+        from app.repo_pr import HttpGitHub
+
+        self.repo_fetcher: Any = fetch_github
+        self.github_factory: Any = HttpGitHub
 
     # ---- mode and wiring -------------------------------------------------
 
@@ -198,10 +291,32 @@ class RunRegistry:
             run_id=uuid.uuid4().hex, bug_id=bug["id"], mode=mode or self.resolve_mode(),
             engine=engine or self.settings.engine, user_id=user_id, model_override=model_override,
             trace_id=trace_id, trace_headers=dict(trace_headers or {}),
+            prices=(self.settings.price_in_per_mtok, self.settings.price_out_per_mtok),
         )
         self.runs[run.run_id] = run
         run.emit("run_started", {"run_id": run.run_id, "bug_id": run.bug_id, "mode": run.mode, "engine": run.engine})
         self._spawn(self._execute(run, bug))
+        return run
+
+    def start_repo(self, spec: Any, trace_id: str = "", trace_headers: dict[str, str] | None = None) -> Run:
+        """Start a repo task (POST /repo-runs). The token is kept on the Run object in memory only."""
+        from app.repo_flow import resolve_demo, run_repo_task
+
+        demo_name = resolve_demo(spec.full_name, self.settings.mode == "fake")
+        mode = "fake" if self.settings.mode == "fake" else self.resolve_mode()
+        run = Run(
+            run_id=uuid.uuid4().hex, bug_id=f"repo:{spec.full_name}", mode=mode, engine="graph",
+            user_id=spec.user_id, trace_id=trace_id, trace_headers=dict(trace_headers or {}),
+            prices=(self.settings.price_in_per_mtok, self.settings.price_out_per_mtok),
+            kind="repo", repo=f"demo/{demo_name}" if demo_name else spec.full_name, branch=spec.branch,
+            task=spec.task, source=spec.source, issue_ref=spec.issue_ref, run_url=spec.run_url,
+            demo=bool(demo_name), followup=spec.followup,
+        )
+        run._token = spec.token
+        self.runs[run.run_id] = run
+        run.emit("run_started", {"run_id": run.run_id, "bug_id": run.bug_id, "mode": run.mode, "engine": "graph",
+                                 "kind": "repo", "repo": run.repo})
+        self._spawn(run_repo_task(self, run, spec, demo_name))
         return run
 
     def start_replay(self, source: Run, user_id: str | None = None, trace_id: str = "") -> Run:
@@ -274,6 +389,10 @@ class RunRegistry:
             "tokens": int(usage.get("prompt_tokens", 0)) + int(usage.get("completion_tokens", 0)),
             "latency_ms": run.latency_ms or 0, "ttfn_ms": run.ttfn_ms or 0,
             "cancelled": ctx.cancelled if ctx else 0,
+            "kind": run.kind, "repo": run.repo, "source": run.source or "api",
+            "cost_usd": usage.get("cost_usd") or 0.0, "ttfe_ms": run.ttfe_ms or 0,
+            "pr_opened": bool(run.pr_url), "guard_blocks": sum(
+                1 for e in run.events if e["type"] == "guard" and e["data"].get("verdict") == "block"),
         })
         log.info("run finished status=%s solved=%s latency_ms=%s ttfn_ms=%s",
                  run.status, bool(done.get("solved")), run.latency_ms, run.ttfn_ms)
@@ -322,7 +441,7 @@ class RunRegistry:
         found = []
         for path in self.settings.runs_dir.glob("*.json"):
             run = self.load(path.stem)
-            if run is None or run.mode not in REAL_MODES or (bug_id and run.bug_id != bug_id):
+            if run is None or run.kind != "bug" or run.mode not in REAL_MODES or (bug_id and run.bug_id != bug_id):
                 continue
             done = run.done_event()
             if not done.get("solved"):

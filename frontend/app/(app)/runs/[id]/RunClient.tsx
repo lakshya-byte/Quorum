@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, errorMessage, runsApi, type Bug, type Run } from "../../../_lib/api";
+import { ApiError, errorMessage, runsApi, slackApi, type Bug, type Run } from "../../../_lib/api";
 import { PageSkeleton, RequireAuth } from "../../../_lib/auth";
 import { isFinishedRun, useRunStream } from "../../../_lib/useRunStream";
 import RunView from "../../../_components/run/RunView";
 import { CopyCliButton, OpenPrButton } from "../../../_components/run/Actions";
+import { Icon, LinkButton } from "../../../_ui";
 
 export function noticeKey(runId: string) {
   return `patchloop:notice:${runId}`;
@@ -15,6 +16,7 @@ export function noticeKey(runId: string) {
 function RunInner({ id }: { id: string }) {
   const [run, setRun] = useState<Run | null>(null);
   const [bug, setBug] = useState<Bug | null>(null);
+  const [slack, setSlack] = useState<boolean | null>(null);
   const [error, setError] = useState<{ status: number; message: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -25,12 +27,18 @@ function RunInner({ id }: { id: string }) {
       .then((r) => {
         if (cancelled) return;
         setRun(r);
-        runsApi
-          .bugs()
-          .then((bugs) => !cancelled && setBug((bugs || []).find((b) => b.id === r.bugId) ?? null))
-          .catch(() => {});
+        if (r.kind !== "repo" && r.bugId) {
+          runsApi
+            .bugs()
+            .then((bugs) => !cancelled && setBug((bugs || []).find((b) => b.id === r.bugId) ?? null))
+            .catch(() => {});
+        }
       })
       .catch((e) => !cancelled && setError({ status: e instanceof ApiError ? e.status : 0, message: errorMessage(e) }));
+    slackApi
+      .get()
+      .then((s) => !cancelled && setSlack(!!s.configured))
+      .catch(() => {});
     try {
       const n = sessionStorage.getItem(noticeKey(id));
       // eslint-disable-next-line react-hooks/set-state-in-effect -- read once from browser storage
@@ -52,39 +60,52 @@ function RunInner({ id }: { id: string }) {
 
   if (error) {
     return (
-      <div className="rounded-xl border border-error/40 bg-error/5 p-6 flex flex-col gap-2 items-start">
-        <h1 className="text-lg text-white font-semibold">{error.status === 404 ? "Run not found" : "Could not load this run"}</h1>
-        <p className="text-[13px] text-on-surface-variant">{error.message}</p>
-        <Link href="/dashboard" className="mt-2 text-[13px] text-primary underline">
+      <div className="flex flex-col items-start gap-2 rounded-xl border border-error/40 bg-error/5 p-6">
+        <h1 className="text-lg font-semibold text-white">{error.status === 404 ? "Run not found" : "Could not load this run"}</h1>
+        <p className="text-[14px] text-on-surface-variant">{error.message}</p>
+        <LinkButton href="/dashboard" variant="secondary" size="sm" icon="arrow-left" className="mt-2">
           Back to dashboard
-        </Link>
+        </LinkButton>
       </div>
     );
   }
   if (!run) return <PageSkeleton />;
 
-  const bugView = bug ?? { id: run.bugId, title: run.bugId, issue: "", tier: "" };
+  const isRepo = run.kind === "repo";
+  const bugView = isRepo ? null : (bug ?? { id: run.bugId, title: run.bugId, issue: "", tier: "" });
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2 font-mono text-[11px] text-on-surface-variant">
-        <Link href="/dashboard" className="hover:text-white inline-flex items-center gap-1">
-          <span className="material-symbols-outlined text-[15px]">arrow_back</span>
+    <div className="flex flex-col gap-5">
+      <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-[13px] text-on-surface-variant">
+        <Link href="/dashboard" className="focus-ring inline-flex items-center gap-1 rounded hover:text-white">
+          <Icon name="arrow-left" size={14} />
           Dashboard
         </Link>
-        <span className="text-outline">/</span>
-        <span className="truncate">run {run.id}</span>
-      </div>
+        <span className="text-text-subtle">/</span>
+        <span className="truncate font-mono text-[12px]">run {run.id}</span>
+        {run.parentRunId && (
+          <>
+            <span className="text-text-subtle">·</span>
+            <Link href={`/runs/${run.parentRunId}`} className="focus-ring rounded text-primary underline">
+              follow-up of {run.parentRunId.slice(0, 8)}
+            </Link>
+          </>
+        )}
+      </nav>
       <RunView
         state={state}
         bug={bugView}
+        run={run}
         notice={notice}
         onRetry={retry}
+        slackConfigured={slack}
         solvedActions={
-          <>
-            <OpenPrButton runId={run.id} prUrl={state.prUrl} onOpened={onOpened} />
-            <CopyCliButton bugId={run.bugId} />
-          </>
+          isRepo ? null : (
+            <>
+              <OpenPrButton runId={run.id} prUrl={state.prUrl} onOpened={onOpened} />
+              <CopyCliButton bugId={run.bugId} />
+            </>
+          )
         }
       />
     </div>
@@ -94,7 +115,7 @@ function RunInner({ id }: { id: string }) {
 export default function RunClient({ id }: { id: string }) {
   return (
     <RequireAuth>
-      <RunInner id={id} />
+      <RunInner key={id} id={id} />
     </RequireAuth>
   );
 }

@@ -1,87 +1,60 @@
+"use client";
+
 import Link from "next/link";
+import { useState } from "react";
+import { Icon, LinkButton, Logo } from "../../_ui";
+
+const LINKS = [
+  { href: "#how", label: "How it works" },
+  { href: "#entry-points", label: "Where you start" },
+  { href: "#trust", label: "Trust" },
+  { href: "#faq", label: "FAQ" },
+  { href: "/docs", label: "Docs" },
+];
 
 export default function Header() {
+  const [open, setOpen] = useState(false);
   return (
-    <header className="fixed top-0 w-full z-50 bg-[#07090e]/85 backdrop-blur-xl border-b border-outline-variant/50">
-      <div className="h-14 max-w-7xl mx-auto px-4 lg:px-8 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <a className="flex items-center gap-2.5 group" href="#">
-            <img
-              alt="PatchLoop"
-              src="/patchloop-logo.svg"
-              className="h-7 w-7 object-contain transition-transform duration-200 group-hover:scale-105"
-            />
-            <span className="text-[16px] text-white tracking-tight font-semibold">
-              PatchLoop
-            </span>
-          </a>
-          <div className="hidden sm:flex items-center gap-2 ml-1">
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-container-high text-primary border border-primary/25 flex items-center gap-1.5 tracking-wide">
-              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-              Agents propose · tests decide
-            </span>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-container-low text-on-surface-variant/80 border border-outline-variant/40 flex items-center gap-1 tracking-wide">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              Humans merge
-            </span>
-          </div>
-        </div>
-
-        <nav className="hidden md:flex items-center gap-1">
-          <a
-            className="px-3 py-1 rounded text-on-surface-variant hover:text-white hover:bg-surface-container-high transition-colors text-[13px]"
-            href="#prover-dashboard"
-          >
-            Example run
-          </a>
-          <a
-            className="px-3 py-1 rounded text-on-surface-variant hover:text-white hover:bg-surface-container-high transition-colors text-[13px]"
-            href="#proof-explorer"
-          >
-            Before / after
-          </a>
-          <a
-            className="px-3 py-1 rounded text-on-surface-variant hover:text-white hover:bg-surface-container-high transition-colors text-[13px]"
-            href="#architecture"
-          >
-            Architecture
-          </a>
-          <a
-            className="px-3 py-1 rounded text-on-surface-variant hover:text-white hover:bg-surface-container-high transition-colors text-[13px]"
-            href="#benchmarks"
-          >
-            Principles
-          </a>
-          <Link
-            className="px-3 py-1 rounded text-primary hover:text-white hover:bg-surface-container-high transition-colors text-[13px]"
-            href="/try"
-          >
-            Try it
-          </Link>
-          <Link
-            className="px-3 py-1 rounded text-on-surface-variant hover:text-white hover:bg-surface-container-high transition-colors text-[13px]"
-            href="/docs"
-          >
-            Docs
-          </Link>
+    <header className="fixed inset-x-0 top-0 z-50 border-b border-border bg-bg/80 backdrop-blur-xl">
+      <a href="#main" className="skip-link">
+        Skip to content
+      </a>
+      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 lg:px-8">
+        <Logo />
+        <nav aria-label="Main" className="hidden items-center gap-1 md:flex">
+          {LINKS.map((l) => (
+            <Link key={l.href} href={l.href} className="focus-ring rounded-md px-3 py-1.5 text-[13.5px] text-on-surface-variant transition-colors hover:text-white">
+              {l.label}
+            </Link>
+          ))}
         </nav>
-
-        <div className="flex items-center gap-3">
-          <Link
-            className="hidden sm:inline-flex text-on-surface-variant hover:text-white transition-colors text-[13px] font-medium"
-            href="/signin"
-          >
+        <div className="flex items-center gap-2">
+          <Link href="/signin" className="focus-ring hidden rounded-md px-3 py-1.5 text-[13.5px] text-on-surface-variant hover:text-white sm:block">
             Sign in
           </Link>
-          <Link
-            className="relative inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded bg-primary text-black text-[13px] font-semibold shadow-[0_0_16px_rgba(16,185,129,0.35)] hover:bg-[#34d399] transition-all duration-150"
-            href="/signup"
+          <LinkButton href="/signup" size="sm">
+            Get started
+          </LinkButton>
+          <button
+            type="button"
+            className="focus-ring flex h-8 w-8 items-center justify-center rounded-md border border-border-strong text-on-surface-variant md:hidden"
+            aria-label={open ? "Close menu" : "Open menu"}
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
           >
-            <span>Get Started</span>
-            <span className="material-symbols-outlined text-[15px]">arrow_forward</span>
-          </Link>
+            <Icon name={open ? "x" : "menu"} size={16} />
+          </button>
         </div>
       </div>
+      {open && (
+        <nav aria-label="Mobile" className="border-t border-border bg-bg px-4 py-2 md:hidden">
+          {[...LINKS, { href: "/signin", label: "Sign in" }, { href: "/try", label: "Live demo" }].map((l) => (
+            <Link key={l.href} href={l.href} onClick={() => setOpen(false)} className="focus-ring block rounded-md px-2 py-2.5 text-[15px] text-on-surface-variant hover:text-white">
+              {l.label}
+            </Link>
+          ))}
+        </nav>
+      )}
     </header>
   );
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"patchloop-backend/internal/models"
@@ -25,7 +26,9 @@ func NewSlackNotifier(webhookURL, publicAppURL string) *SlackNotifier {
 	return &SlackNotifier{
 		WebhookURL:   webhookURL,
 		PublicAppURL: publicAppURL,
-		client:       &http.Client{Timeout: 5 * time.Second},
+		client: &http.Client{Timeout: 5 * time.Second,
+			// Never follow redirects: a webhook must not bounce us to another host.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}
 }
 
@@ -117,18 +120,28 @@ func (s *SlackNotifier) BuildRunMessage(run *models.Run) map[string]any {
 	}
 }
 
-// Post sends a payload; returns the HTTP status (0 on transport error).
+// Post sends a payload to the global webhook.
 func (s *SlackNotifier) Post(ctx context.Context, payload map[string]any) (int, error) {
+	return s.PostTo(ctx, s.WebhookURL, payload)
+}
+
+// PostTo sends a payload to an incoming webhook; returns the HTTP status (0
+// on transport error). The webhook URL is a secret and never appears in errors.
+func (s *SlackNotifier) PostTo(ctx context.Context, webhook string, payload map[string]any) (int, error) {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return 0, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.WebhookURL, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook, bytes.NewReader(b))
 	if err != nil {
-		return 0, errors.New("invalid SLACK_WEBHOOK_URL")
+		return 0, errors.New("invalid slack webhook url")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.client.Do(req)
+	client := s.client
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		// *url.Error embeds the webhook URL, which is a secret: drop it.
 		var uerr *url.Error
@@ -142,4 +155,68 @@ func (s *SlackNotifier) Post(ctx context.Context, payload map[string]any) (int, 
 		return resp.StatusCode, fmt.Errorf("slack returned %d", resp.StatusCode)
 	}
 	return resp.StatusCode, nil
+}
+
+// slackEscape escapes the three characters Slack mrkdwn treats specially.
+func slackEscape(s string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
+}
+
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
+}
+
+// RepoResultText is the one-line result of a repo run.
+func RepoResultText(run *models.Run) string {
+	switch {
+	case run.Solved && run.PRURL != "":
+		return "Fix found, tests pass, PR opened"
+	case run.Solved:
+		return "Fix found, tests pass (no PR yet)"
+	default:
+		return "No passing fix found"
+	}
+}
+
+// BuildRepoRunMessage is the Block Kit completion card for a repo run: repo,
+// task, result, attempts and a PR button.
+func (s *SlackNotifier) BuildRepoRunMessage(run *models.Run, runURL string) map[string]any {
+	tests := "n/a"
+	if p, t, ok := TestsPassed(run); ok {
+		tests = fmt.Sprintf("%d/%d passed", p, t)
+	}
+	buttons := []map[string]any{}
+	if run.PRURL != "" {
+		buttons = append(buttons, map[string]any{
+			"type": "button", "style": "primary", "action_id": "open_pr",
+			"text": map[string]any{"type": "plain_text", "text": "Review PR"},
+			"url":  run.PRURL,
+		})
+	}
+	buttons = append(buttons, map[string]any{
+		"type": "button", "action_id": "open_run",
+		"text": map[string]any{"type": "plain_text", "text": "Open run"},
+		"url":  runURL,
+	})
+	return map[string]any{
+		"text": fmt.Sprintf("PatchLoop: %s - %s", run.Repo, RepoResultText(run)),
+		"blocks": []map[string]any{
+			{"type": "header", "text": map[string]any{"type": "plain_text", "text": "PatchLoop " + map[bool]string{true: "fix ready", false: "finished"}[run.Solved]}},
+			{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": "*" + RepoResultText(run) + "*\n>" + slackEscape(truncate(run.Task, 280))}},
+			{"type": "section", "fields": []map[string]any{
+				{"type": "mrkdwn", "text": "*Repo*\n" + slackEscape(run.Repo) + " @ " + slackEscape(run.Branch)},
+				{"type": "mrkdwn", "text": "*Attempts*\n" + fmt.Sprint(len(run.Nodes))},
+				{"type": "mrkdwn", "text": "*Tests*\n" + tests},
+				{"type": "mrkdwn", "text": fmt.Sprintf("*Latency*\n%d ms", run.LatencyMs)},
+			}},
+			{"type": "context", "elements": []map[string]any{
+				{"type": "mrkdwn", "text": "Agents cannot merge. A human must review and merge the pull request."},
+			}},
+			{"type": "actions", "elements": buttons},
+		},
+	}
 }

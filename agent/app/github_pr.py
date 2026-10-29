@@ -40,7 +40,7 @@ def open_pr(
     bug: Bug, node: dict[str, Any], settings: Settings | None = None, sandbox_label: str = NEBIUS_LABEL,
     draft: dict[str, Any] | None = None,
 ) -> str:
-    """Open a PR from a fresh patchloop/* branch. Agents never merge and never push to the default branch."""
+    """Open a PR from a fresh patchloop/* branch. Agents never push to the default branch; a human closes the loop."""
     settings = settings or load_settings()
     if not settings.github_token or not settings.github_repo:
         raise RuntimeError("GITHUB_TOKEN and GITHUB_REPO must be set to open pull requests")

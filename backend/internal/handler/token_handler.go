@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"patchloop-backend/internal/pkg/apierr"
 
 	"patchloop-backend/internal/dto"
 	"patchloop-backend/internal/middleware"
@@ -23,16 +24,16 @@ func NewTokenHandler(tokens *service.TokenService) *TokenHandler {
 func (h *TokenHandler) Create(c *gin.Context) {
 	var req dto.CreateTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required (max 100 characters)"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required (max 100 characters)", "code": apierr.Code(http.StatusBadRequest)})
 		return
 	}
 	t, plain, err := h.tokens.Create(c.Request.Context(), c.GetString(middleware.ContextUserIDKey), req.Name)
 	if err != nil {
 		if errors.Is(err, service.ErrTooManyTokens) {
-			c.JSON(http.StatusConflict, gin.H{"error": "token limit reached, delete an old token first"})
+			c.JSON(http.StatusConflict, gin.H{"error": "token limit reached, delete an old token first", "code": apierr.Code(http.StatusConflict)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create token"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create token", "code": apierr.Code(http.StatusInternalServerError)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"token": plain, "id": t.ID.Hex(), "name": t.Name, "prefix": t.Prefix, "createdAt": t.CreatedAt})
@@ -42,7 +43,7 @@ func (h *TokenHandler) Create(c *gin.Context) {
 func (h *TokenHandler) List(c *gin.Context) {
 	tokens, err := h.tokens.List(c.Request.Context(), c.GetString(middleware.ContextUserIDKey))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list tokens"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list tokens", "code": apierr.Code(http.StatusInternalServerError)})
 		return
 	}
 	c.JSON(http.StatusOK, tokens)
@@ -53,10 +54,10 @@ func (h *TokenHandler) Delete(c *gin.Context) {
 	err := h.tokens.Delete(c.Request.Context(), c.GetString(middleware.ContextUserIDKey), c.Param("id"))
 	if err != nil {
 		if errors.Is(err, service.ErrTokenNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "token not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "token not found", "code": apierr.Code(http.StatusNotFound)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete token"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete token", "code": apierr.Code(http.StatusInternalServerError)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "token deleted"})
@@ -67,7 +68,7 @@ func DevOTP(mailer *service.Mailer) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		code, ok := mailer.LastOTP(c.Query("email"))
 		if !ok {
-			c.JSON(http.StatusNotFound, gin.H{"error": "no code for that email"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "no code for that email", "code": apierr.Code(http.StatusNotFound)})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"code": code})

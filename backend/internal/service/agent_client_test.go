@@ -29,7 +29,7 @@ func TestAgentClientErrorMapping(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer srv.Close()
-			_, err := NewAgentClient(srv.URL, "s").OpenPR(context.Background(), "run1")
+			_, err := NewAgentClient(srv.URL, "s").OpenPR(context.Background(), "run1", "")
 			if tc.wantStatus == 0 {
 				if !errors.Is(err, ErrAgentUnavailable) {
 					t.Fatalf("want ErrAgentUnavailable, got %v", err)

@@ -1,0 +1,19 @@
+{
+  "name": "booking",
+  "description": "Room booking calendar with half-open hour intervals.",
+  "language": "python",
+  "default_branch": "main",
+  "default_task": "Back-to-back bookings are rejected as conflicts: booking 10-11 right after 9-10 raises ConflictError.",
+  "locate": [
+    {
+      "path": "booking/intervals.py",
+      "reason": "overlaps() uses <= so touching intervals count as overlapping"
+    },
+    {
+      "path": "booking/calendar.py",
+      "reason": "Calendar.book() relies on overlaps()"
+    }
+  ],
+  "repro_path": "tests/test_patchloop_repro.py",
+  "fix_files": 1
+}

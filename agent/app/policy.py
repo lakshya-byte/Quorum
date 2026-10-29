@@ -11,9 +11,11 @@ Rules (any violation blocks the candidate, which then scores 0):
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
+from app.repo_detect import is_test_path
 from app.scoring import changed_lines
 
 DENIED_MODULES = {
@@ -106,6 +108,80 @@ def ast_violations(code: str) -> list[str]:
             if is_open and not _safe_open_path(node):
                 add("open() on a path outside the working directory (or not a literal)", node)
     return found
+
+
+SAFE_PATH = re.compile(r"^[A-Za-z0-9_@+./-]+$")
+MAX_REPO_FILES = 10
+MAX_REPO_FILE_BYTES = 200_000
+DENIED_TOP = {".git", ".github", ".gitlab", ".circleci"}
+DENIED_NAMES = {".gitignore", ".gitattributes", ".gitmodules", "codeowners", "dockerfile", "makefile"}
+
+
+def path_violation(path: str) -> str | None:
+    """Why `path` may never be written by a candidate (None = fine). Pure string checks, no filesystem."""
+    if not isinstance(path, str) or not path or len(path) > 300:
+        return "empty or oversized path"
+    if "\x00" in path or "\\" in path:
+        return f"{path!r}: illegal characters in path"
+    if path.startswith(("/", "~")) or re.match(r"^[A-Za-z]:", path):
+        return f"{path}: absolute path"
+    parts = path.split("/")
+    if ".." in parts or "." in parts or "" in parts:
+        return f"{path}: path traversal"
+    if not SAFE_PATH.match(path):
+        return f"{path}: unsupported characters in path"
+    lowered = [p.lower() for p in parts]
+    if lowered[0] in DENIED_TOP or ".git" in lowered or ".github" in lowered:
+        return f"{path}: .git/.github paths are off limits"
+    if lowered[-1] in DENIED_NAMES:
+        return f"{path}: repo control file is off limits"
+    return None
+
+
+def check_repo_candidate(
+    bug: dict, changed_files: dict[str, str], *, max_diff_lines: int = DEFAULT_MAX_DIFF,
+) -> PolicyResult:
+    """Policy for a multi-file repo candidate. Every path is validated; existing tests are immutable; the only
+    new test file allowed is the accepted reproducer, byte-identical."""
+    reasons: list[str] = []
+    originals: dict[str, str] = bug.get("files", {})
+    repro_path = bug.get("reproducer_path") or ""
+    if not changed_files:
+        return PolicyResult(False, ["candidate changes no files"])
+    if len(changed_files) > MAX_REPO_FILES:
+        reasons.append(f"too many files: {len(changed_files)} > {MAX_REPO_FILES}")
+    total_diff, source_changes = 0, 0
+    for path, text in changed_files.items():
+        bad = path_violation(path)
+        if bad:
+            reasons.append(bad)
+            continue
+        if not isinstance(text, str):
+            reasons.append(f"{path}: content is not text")
+            continue
+        if path == repro_path:
+            if text != bug.get("tests"):
+                reasons.append(f"reproducer {path} modified (it must stay byte-identical)")
+            continue
+        if is_test_path(path):
+            reasons.append(f"test file {path} {'modified' if path in originals else 'added'} "
+                           "(existing tests are immutable; only the reproducer may be new)")
+            continue
+        if len(text.encode("utf-8", errors="replace")) > MAX_REPO_FILE_BYTES:
+            reasons.append(f"{path}: file too large")
+            continue
+        if not text.strip():
+            reasons.append(f"{path}: empty content")
+            continue
+        source_changes += 1
+        total_diff += changed_lines(originals.get(path, ""), text)
+        if path.endswith(".py"):
+            reasons.extend(f"{path}: {v}" for v in ast_violations(text))
+    if source_changes == 0 and not reasons:
+        reasons.append("no source file changed")
+    if total_diff > max_diff_lines * 2:
+        reasons.append(f"diff too large: {total_diff} changed lines > {max_diff_lines * 2}")
+    return PolicyResult(ok=not reasons, reasons=reasons)
 
 
 def check_candidate(

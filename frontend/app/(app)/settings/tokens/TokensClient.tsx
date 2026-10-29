@@ -4,18 +4,21 @@ import { useCallback, useEffect, useState } from "react";
 import { errorMessage, tokensApi, type ApiToken } from "../../../_lib/api";
 import { RequireAuth } from "../../../_lib/auth";
 import { CopyButton } from "../../../_components/run/Actions";
+import { Button, Card, EmptyState, ErrorNote, Field, Icon, Input, PageHeader, Skeleton, useToast } from "../../../_ui";
 
 function fmtDate(s: string | null) {
   return s ? new Date(s).toLocaleString() : "never";
 }
 
 function TokensInner() {
+  const { toast } = useToast();
   const [tokens, setTokens] = useState<ApiToken[] | null>(null);
   const [name, setName] = useState("");
   const [created, setCreated] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -48,10 +51,11 @@ function TokensInner() {
   };
 
   const revoke = async (t: ApiToken) => {
-    if (!window.confirm(`Revoke "${t.name}"? Anything using it stops working.`)) return;
     setRevoking(t.id);
     try {
       await tokensApi.revoke(t.id);
+      toast(`Revoked "${t.name}".`, "info");
+      setConfirming(null);
       await load();
     } catch (err) {
       setError(errorMessage(err));
@@ -63,100 +67,95 @@ function TokensInner() {
   const loginLine = created ? `patchloop login --token ${created}` : "";
 
   return (
-    <div className="flex flex-col gap-6 max-w-4xl">
-      <div>
-        <h1 className="text-2xl sm:text-3xl text-white font-semibold tracking-tight">API tokens</h1>
-        <p className="mt-1 text-[13.5px] text-on-surface-variant">
-          Tokens let the <code className="font-mono text-primary">patchloop</code> CLI and scripts call the API as you
-          (sent as <code className="font-mono text-on-surface">Authorization: Bearer plk_…</code>). A token is shown once.
-        </p>
-      </div>
+    <div className="flex max-w-4xl flex-col gap-6">
+      <PageHeader
+        title="API tokens"
+        description={
+          <>
+            Tokens let the <code className="font-mono text-primary">patchloop</code> CLI and scripts call the API as you, sent as{" "}
+            <code className="font-mono text-on-surface">Authorization: Bearer plk_…</code>. A token is shown once.
+          </>
+        }
+      />
 
-      <form onSubmit={create} className="rounded-xl border border-outline-variant/60 bg-[#0b0e15] p-4 sm:p-5 flex flex-col sm:flex-row gap-3 sm:items-end">
-        <label className="flex-1 flex flex-col gap-1.5">
-          <span className="text-[11px] font-mono text-on-surface-variant">Token name</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. laptop CLI"
-            maxLength={64}
-            data-testid="token-name"
-            className="w-full px-3.5 py-2.5 bg-surface-container-low border border-white/10 rounded-lg text-sm text-on-surface placeholder-on-surface-variant/60 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-          />
-        </label>
-        <button
-          type="submit"
-          disabled={busy || !name.trim()}
-          className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg bg-primary text-black text-[13px] font-semibold hover:bg-[#34d399] disabled:opacity-60"
-        >
-          <span className="material-symbols-outlined text-[17px]">key</span>
-          {busy ? "Creating…" : "Create token"}
-        </button>
-      </form>
+      <Card className="p-5">
+        <form onSubmit={create} className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <Field label="Token name" className="flex-1">
+            {(p) => <Input {...p} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. laptop CLI" maxLength={64} data-testid="token-name" />}
+          </Field>
+          <Button type="submit" icon="key" loading={busy} disabled={!name.trim()} data-testid="token-create">
+            Create token
+          </Button>
+        </form>
+      </Card>
 
-      {error && <p className="text-[13px] text-error">{error}</p>}
+      {error && <ErrorNote>{error}</ErrorNote>}
 
       {created && (
-        <section data-testid="new-token" className="rounded-xl border border-primary/50 bg-primary/5 p-4 sm:p-5 flex flex-col gap-3">
-          <div className="flex items-center gap-2 text-primary text-[14px] font-medium">
-            <span className="material-symbols-outlined text-[18px]">warning</span>
+        <section data-testid="new-token" className="flex flex-col gap-3 rounded-xl border border-primary/45 bg-primary/5 p-5">
+          <div className="flex items-center gap-2 text-[14px] font-semibold text-primary">
+            <Icon name="alert" size={16} />
             Copy this token now. You will not see it again.
           </div>
-          <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-            <code className="flex-1 min-w-0 break-all font-mono text-[13px] text-white bg-[#07090e] border border-outline-variant/60 rounded-lg px-3 py-2.5">
-              {created}
-            </code>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <code className="min-w-0 flex-1 break-all rounded-lg border border-border bg-bg px-3 py-2.5 font-mono text-[13px] text-white">{created}</code>
             <CopyButton text={created} label="Copy token" />
           </div>
-          <div className="text-[12px] font-mono text-on-surface-variant">Sign the CLI in with:</div>
-          <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-            <code className="flex-1 min-w-0 break-all font-mono text-[13px] text-secondary bg-[#07090e] border border-outline-variant/60 rounded-lg px-3 py-2.5">
-              <span className="text-primary select-none">$ </span>
+          <div className="text-[12.5px] text-on-surface-variant">Sign the CLI in with:</div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <code className="min-w-0 flex-1 break-all rounded-lg border border-border bg-bg px-3 py-2.5 font-mono text-[13px] text-secondary">
+              <span className="select-none text-primary">$ </span>
               {loginLine}
             </code>
             <CopyButton text={loginLine} label="Copy command" />
           </div>
-          <button onClick={() => setCreated(null)} className="self-start text-[12px] text-on-surface-variant hover:text-white underline">
+          <button onClick={() => setCreated(null)} className="focus-ring self-start rounded text-[13px] text-on-surface-variant underline hover:text-white">
             I saved it, hide the token
           </button>
         </section>
       )}
 
-      <section className="rounded-xl border border-outline-variant/60 bg-[#0b0e15] overflow-hidden">
-        <div className="px-4 sm:px-5 py-3 border-b border-outline-variant/50">
-          <h2 className="text-[13px] font-mono uppercase tracking-wider text-on-surface-variant">Active tokens</h2>
+      <Card className="overflow-hidden">
+        <div className="border-b border-border px-5 py-3.5">
+          <h2 className="text-[15px] font-semibold text-white">Active tokens</h2>
         </div>
         {!tokens ? (
-          <div className="p-5 flex flex-col gap-2">
-            {[0, 1].map((i) => (
-              <div key={i} className="h-10 rounded bg-surface-container-low animate-pulse" />
-            ))}
+          <div className="flex flex-col gap-2 p-5">
+            <Skeleton className="h-11" />
+            <Skeleton className="h-11" />
           </div>
         ) : tokens.length === 0 ? (
-          <p className="px-5 py-8 text-center text-[13px] text-on-surface-variant">No tokens yet.</p>
+          <EmptyState icon="key" title="No tokens yet" description="Create one above to sign the CLI in." />
         ) : (
-          <ul className="divide-y divide-outline-variant/30">
+          <ul className="divide-y divide-border">
             {tokens.map((t) => (
-              <li key={t.id} className="px-4 sm:px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <li key={t.id} className="flex flex-col justify-between gap-2 px-5 py-3.5 sm:flex-row sm:items-center">
                 <div className="min-w-0">
-                  <div className="text-[13.5px] text-white">{t.name}</div>
-                  <div className="font-mono text-[11px] text-on-surface-variant">
+                  <div className="text-[14px] font-medium text-white">{t.name}</div>
+                  <div className="font-mono text-[11.5px] text-on-surface-variant">
                     {t.prefix}… · created {fmtDate(t.createdAt)} · last used {fmtDate(t.lastUsedAt)}
                   </div>
                 </div>
-                <button
-                  onClick={() => revoke(t)}
-                  disabled={revoking === t.id}
-                  className="self-start sm:self-auto inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-error/40 text-error text-[12.5px] hover:bg-error/10 disabled:opacity-60"
-                >
-                  <span className="material-symbols-outlined text-[15px]">delete</span>
-                  {revoking === t.id ? "Revoking…" : "Revoke"}
-                </button>
+                {confirming === t.id ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] text-on-surface-variant">Anything using it stops working.</span>
+                    <Button size="sm" variant="danger" loading={revoking === t.id} onClick={() => revoke(t)}>
+                      Revoke
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <Button size="sm" variant="secondary" icon="trash" onClick={() => setConfirming(t.id)} aria-label={`Revoke ${t.name}`}>
+                    Revoke
+                  </Button>
+                )}
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Card>
     </div>
   );
 }

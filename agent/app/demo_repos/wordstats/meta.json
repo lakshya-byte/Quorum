@@ -1,0 +1,15 @@
+{
+  "name": "wordstats",
+  "description": "Word frequency helpers: tokenizer, counter, report.",
+  "language": "python",
+  "default_branch": "main",
+  "default_task": "Word counts are wrong: 'The' and 'the' are counted separately and contractions like don't are split into two words.",
+  "locate": [
+    {
+      "path": "wordstats/tokenizer.py",
+      "reason": "tokenize() keeps case and splits on apostrophes; counter and report both build on it"
+    }
+  ],
+  "repro_path": "tests/test_patchloop_repro.py",
+  "fix_files": 1
+}

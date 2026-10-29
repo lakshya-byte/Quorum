@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Icon } from "../_ui";
 import DocsSidebar from "./_components/DocsSidebar";
 
 export default function DocsLayout({ children }: { children: React.ReactNode }) {
@@ -23,7 +24,7 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
             href="/"
             className="flex items-center gap-1.5 text-[13px] text-on-surface-variant hover:text-white transition-colors"
           >
-            <span className="material-symbols-outlined text-[16px]">arrow_back</span>
+            <Icon name="arrow-left" size={16} />
             <span>Back to site</span>
           </Link>
         </div>

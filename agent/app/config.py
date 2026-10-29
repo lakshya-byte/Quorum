@@ -82,6 +82,11 @@ class Settings:
     langsmith_project: str = "patchloop"
     new_relic_license_key: str = field(default="", repr=False)
     sandbox_concurrency: int = 8
+    # Optional price list (USD per million tokens) so runs can report an estimated cost
+    # Real (non-demo) repositories run their own code: only inside Nebius Sandboxes unless explicitly allowed
+    allow_local_repo_exec: bool = False
+    price_in_per_mtok: float = 0.0
+    price_out_per_mtok: float = 0.0
 
     @property
     def llm_ready(self) -> bool:
@@ -135,4 +140,7 @@ def load_settings() -> Settings:
         langsmith_project=_env("LANGSMITH_PROJECT", "patchloop") or "patchloop",
         new_relic_license_key=_env("NEW_RELIC_LICENSE_KEY"),
         sandbox_concurrency=_int("SANDBOX_CONCURRENCY", 8),
+        allow_local_repo_exec=_env("ALLOW_LOCAL_REPO_EXEC").lower() in ("1", "true", "yes"),
+        price_in_per_mtok=_float("PRICE_IN_PER_MTOK", 0.0),
+        price_out_per_mtok=_float("PRICE_OUT_PER_MTOK", 0.0),
     )

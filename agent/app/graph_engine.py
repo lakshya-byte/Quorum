@@ -72,6 +72,8 @@ class GraphCtx:
     pr_draft: dict[str, Any] | None = None
     started: float = field(default_factory=time.monotonic)
     trace_tags: list[str] = field(default_factory=list)
+    pre_guard: dict[str, Any] | None = None  # guard event already emitted by the repo flow
+    trace_meta: dict[str, Any] = field(default_factory=dict)  # extra LangSmith metadata (repo, source, ...)
 
     def add_usage(self, used: dict[str, int]) -> None:
         self.usage["calls"] += 1
@@ -128,6 +130,8 @@ async def _race(coro: Awaitable[Any], stop: asyncio.Event) -> Any:
 
 async def input_guard(state: TeamState, config: RunnableConfig) -> dict[str, Any]:
     ctx = _ctx(config)
+    if ctx.pre_guard is not None:  # repo runs guard the task before any agent reads it; do not emit twice
+        return {"input_ok": ctx.pre_guard["verdict"] == "pass", "input_reasons": ctx.pre_guard["reasons"]}
     with span("graph.input_guard", group="PatchLoop/Graph"):
         text = f"{ctx.bug['issue']}\n\n{ctx.bug['buggy']}"
         event = await ctx.guard.check("input", text, ctx.mode, ctx.run_id)
@@ -205,7 +209,7 @@ async def propose(payload: dict[str, Any], config: RunnableConfig) -> dict[str, 
             node = await _race(evaluate_candidate(
                 ctx.bug, ctx.sandbox, node_id=node_id, parent=parent["id"], depth=rnd, idea=proposal.idea,
                 code=proposal.code, model=proposal.model, strategy=payload["strategy"],
-                extra_files=proposal.extra_files, timeout=ctx.test_timeout, max_diff_lines=s.max_diff_lines,
+                extra_files=proposal.extra_files, files=getattr(proposal, "files", None) or None, timeout=ctx.test_timeout, max_diff_lines=s.max_diff_lines,
                 started=t0, tokens=proposal.usage["prompt_tokens"] + proposal.usage["completion_tokens"],
             ), stop)
     except Cancelled:
@@ -338,7 +342,8 @@ async def run_graph(ctx: GraphCtx) -> Node | None:
     config: RunnableConfig = {
         "configurable": {"ctx": ctx}, "recursion_limit": 25 + 8 * s.max_rounds, "run_name": "patchloop-team",
         "tags": tags + ctx.trace_tags,
-        "metadata": {"run_id": ctx.run_id, "bug_id": ctx.bug["id"], "engine": "graph", "mode": ctx.mode},
+        "metadata": {"run_id": ctx.run_id, "bug_id": ctx.bug["id"], "engine": "graph", "mode": ctx.mode,
+                     **ctx.trace_meta},
     }
     seen: list[Node] = []
     real_emit = ctx.emit

@@ -1,5 +1,6 @@
 "use client";
 
+import { Icon } from "../../_ui";
 import Image from "next/image";
 import Link from "next/link";
 import signinBackground from "@/public/signin-bg.png";
@@ -72,7 +73,7 @@ export default function SignInCard() {
               className="flex items-center gap-1 text-primary hover:text-primary/80 font-medium ml-1.5 transition-colors"
             >
               <span>Sign up</span>
-              <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+              <Icon name="arrow-right" size={14} />
             </Link>
           </div>
         </div>
@@ -126,24 +127,13 @@ export default function SignInCard() {
               </Link>
             </p>
 
-            <footer className="mt-6 pt-4 border-t border-white/[0.06] flex items-center justify-center text-xs text-on-surface-variant">
-              <div className="flex items-center gap-3">
-                <a href="#terms" className="hover:text-on-surface-variant transition">
-                  Terms
-                </a>
-                <span>•</span>
-                <a href="#privacy" className="hover:text-on-surface-variant transition">
-                  Privacy
-                </a>
-              </div>
-            </footer>
           </article>
         </div>
       </main>
 
       <footer className="relative z-20 py-4 px-6 border-t border-white/[0.04] bg-bg/60 backdrop-blur text-on-surface-variant text-[11px]">
         <div className="max-w-7xl mx-auto text-center">
-          <span>© 2026 PatchLoop, Inc.</span>
+          <span>© 2026 PatchLoop. Hackathon project.</span>
         </div>
       </footer>
     </div>

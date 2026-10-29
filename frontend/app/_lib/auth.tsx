@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { authApi, type User } from "./api";
+import { PageSkeleton } from "../_ui";
 
 type AuthState = {
   user: User | null;
@@ -68,12 +69,4 @@ export function RequireAuth({ children, fallback }: { children: ReactNode; fallb
   return <>{children}</>;
 }
 
-export function PageSkeleton() {
-  return (
-    <div className="flex flex-col gap-4" aria-busy="true">
-      <div className="h-8 w-64 rounded-md bg-surface-container-low animate-pulse" />
-      <div className="h-24 rounded-xl bg-surface-container-low animate-pulse" />
-      <div className="h-64 rounded-xl bg-surface-container-low/70 animate-pulse" />
-    </div>
-  );
-}
+export { PageSkeleton } from "../_ui";

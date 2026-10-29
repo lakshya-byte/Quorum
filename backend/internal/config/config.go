@@ -32,7 +32,26 @@ type Config struct {
 	SlackWebhookURL string
 	PublicAppURL    string
 
+	// GitHub App. Without it only the offline demo account works.
+	GitHubAppID         string
+	GitHubAppSlug       string
+	GitHubAppPrivateKey string // PEM or base64 PEM
+	GitHubClientID      string // the App's user-authorization credentials (merge as the user)
+	GitHubClientSecret  string
+	GitHubWebhookSecret string
+	PublicURL           string // backend public base URL (setup + webhook URLs)
+	FrontendURL         string // where the backend redirects after the install flow
+
+	// Slack workspace app (all optional).
+	SlackSigningSecret string
+	SlackBotToken      string
+	SlackAPIBase       string
+	TokenEncKey        string // base64 of 32 bytes; encrypts tokens and webhooks at rest
+	GitHubAPIURL       string // override for tests / GitHub Enterprise
+	GitHubWebURL       string // override for tests / GitHub Enterprise
+
 	// Limits.
+	TasksPerUserPerHour   int
 	LiveRunsPerUserPerDay int
 	GuestRunsPerHour      int
 	TrustedProxies        []string
@@ -80,6 +99,24 @@ func Load() *Config {
 		SlackWebhookURL: os.Getenv("SLACK_WEBHOOK_URL"),
 		PublicAppURL:    strings.TrimRight(getEnv("PUBLIC_APP_URL", frontendOrigin), "/"),
 
+		GitHubAppID:         os.Getenv("GITHUB_APP_ID"),
+		GitHubAppSlug:       os.Getenv("GITHUB_APP_SLUG"),
+		GitHubAppPrivateKey: os.Getenv("GITHUB_APP_PRIVATE_KEY"),
+		GitHubClientID:      os.Getenv("GITHUB_CLIENT_ID"),
+		GitHubClientSecret:  os.Getenv("GITHUB_CLIENT_SECRET"),
+		GitHubWebhookSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
+		PublicURL:           strings.TrimRight(getEnv("PUBLIC_URL", "http://localhost:"+getEnv("PORT", "8080")), "/"),
+		FrontendURL:         strings.TrimRight(getEnv("FRONTEND_URL", frontendOrigin), "/"),
+
+		SlackSigningSecret: os.Getenv("SLACK_SIGNING_SECRET"),
+		SlackBotToken:      os.Getenv("SLACK_BOT_TOKEN"),
+		SlackAPIBase:       os.Getenv("SLACK_API_BASE"),
+
+		TokenEncKey:  os.Getenv("TOKEN_ENC_KEY"),
+		GitHubAPIURL: strings.TrimRight(getEnv("GITHUB_API_URL", "https://api.github.com"), "/"),
+		GitHubWebURL: strings.TrimRight(getEnv("GITHUB_WEB_URL", "https://github.com"), "/"),
+
+		TasksPerUserPerHour:   getEnvInt("TASKS_PER_USER_PER_HOUR", 10),
 		LiveRunsPerUserPerDay: getEnvInt("LIVE_RUNS_PER_USER_PER_DAY", 10),
 		GuestRunsPerHour:      getEnvInt("GUEST_RUNS_PER_HOUR", 3),
 		TrustedProxies:        splitList(os.Getenv("TRUSTED_PROXIES")),
