@@ -1,0 +1,16 @@
+# NeMo Guardrails config for PatchLoop. Rails-only: we call LLMRails.check_async() with
+# rail_types=[input] or [output]; the rails never generate answers.
+# app/guard.py loads this file and, depending on the probed GUARD_BACKEND, appends one model rail:
+#   nebius -> "content safety check input $model=content_safety" (Nemotron safety model on Nebius)
+#   nvidia -> same flow, model served by NVIDIA (engine nim)
+#   self   -> "self check input" / "self check output" with MODEL_NANO as the main model
+#   heuristic -> only the deterministic rails below (offline, no LLM)
+colang_version: "1.0"
+
+rails:
+  input:
+    flows:
+      - heuristic check input
+  output:
+    flows:
+      - heuristic check output

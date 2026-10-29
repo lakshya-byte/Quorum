@@ -10,6 +10,7 @@ Bug = dict[str, str]
 
 PAGINATE: Bug = {
     "id": "paginate",
+    "tier": "easy",
     "title": "paginate() skips the first page",
     "issue": (
         "paginate(items, page, per_page) should return the items on a 1-indexed page: "
@@ -76,6 +77,7 @@ if __name__ == "__main__":
 
 SLUGIFY: Bug = {
     "id": "slugify",
+    "tier": "easy",
     "title": "slugify() keeps punctuation and stray dashes",
     "issue": (
         "slugify(text) should produce a URL slug: lowercase, punctuation dropped, words "
@@ -141,6 +143,7 @@ def slugify(text):
 
 CART_TOTAL: Bug = {
     "id": "cart",
+    "tier": "easy",
     "title": "cart_total() subtracts the discount as money",
     "issue": (
         "cart_total(items, discount) takes (price, quantity) pairs and a discount given as a "
@@ -205,6 +208,7 @@ if __name__ == "__main__":
 
 AVERAGE: Bug = {
     "id": "average",
+    "tier": "easy",
     "title": "average() truncates and crashes on empty input",
     "issue": (
         "average(values) should return the true arithmetic mean rounded to 2 decimals, "
@@ -262,7 +266,15 @@ if __name__ == "__main__":
 }
 
 
-BUGS: dict[str, Bug] = {bug["id"]: bug for bug in (PAGINATE, SLUGIFY, CART_TOTAL, AVERAGE)}
+EASY_BUGS: tuple[Bug, ...] = (PAGINATE, SLUGIFY, CART_TOTAL, AVERAGE)
+
+from app.bugs_hard import HARD_BUGS  # noqa: E402
+
+BUGS: dict[str, Bug] = {bug["id"]: bug for bug in (*EASY_BUGS, *HARD_BUGS)}
+
+
+def bugs_in_tier(tier: str | None) -> list[Bug]:
+    return [b for b in BUGS.values() if tier in (None, "all", b.get("tier", "easy"))]
 
 
 def get_bug(bug_id: str) -> Bug | None:
