@@ -8,8 +8,11 @@ WORKDIR /srv/agent
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
+COPY guardrails ./guardrails
 COPY scripts ./scripts
-RUN mkdir -p runs
+COPY evals ./evals
+RUN mkdir -p runs .cache && chmod +x scripts/serve.sh
 
 EXPOSE 8001
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+# newrelic-admin wraps uvicorn only when NEW_RELIC_LICENSE_KEY is set
+CMD ["scripts/serve.sh"]

@@ -168,7 +168,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             prewarm.cancel()
 
     async def check_secret(x_agent_secret: str = Header(default="")) -> None:
-        if not hmac.compare_digest(x_agent_secret.encode(), settings.shared_secret.encode()):
+        if not settings.shared_secret or not hmac.compare_digest(x_agent_secret.encode(), settings.shared_secret.encode()):
             raise HTTPException(401, "invalid agent secret")
 
     app = FastAPI(title="PatchLoop agent", version="0.2.0", lifespan=lifespan)

@@ -107,7 +107,7 @@ def load_settings() -> Settings:
     engine = _env("PATCHLOOP_ENGINE", "graph").lower()
     return Settings(
         port=_int("PORT", 8001),
-        shared_secret=_env("AGENT_SHARED_SECRET", "change-me"),
+        shared_secret=_env("AGENT_SHARED_SECRET") or "change-me",
         backend_callback_url=_env("BACKEND_CALLBACK_URL").rstrip("/"),
         nebius_api_key=_env("NEBIUS_API_KEY"),
         nebius_project_id=_env("NEBIUS_PROJECT_ID"),
