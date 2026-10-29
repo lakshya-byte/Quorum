@@ -168,12 +168,12 @@ export default function RunView({ state, bug, run, solvedActions, onRetry, notic
           <div className="flex items-start gap-3">
             <Icon name="bug" size={18} className={state.repro.failed_on_original ? "mt-0.5 text-primary" : "mt-0.5 text-warning"} />
             <div className="min-w-0 flex-1">
-              <p className="text-[13.5px] font-medium text-white">
+              <p className="text-[13.5px] font-medium text-white [overflow-wrap:anywhere]">
                 {state.repro.failed_on_original
                   ? `Reproducer ${state.repro.test_name ? `"${state.repro.test_name}" ` : ""}fails on the original code`
                   : "Could not reproduce the bug with a new test, using the existing suite only"}
               </p>
-              {state.repro.path && <p className="font-mono text-[12px] text-on-surface-variant">{state.repro.path}</p>}
+              {state.repro.path && <p className="font-mono text-[12px] text-on-surface-variant [overflow-wrap:anywhere]">{state.repro.path}</p>}
               {state.repro.output_tail && (
                 <pre className="mt-2 max-h-32 overflow-auto rounded-md border border-border bg-bg p-2.5 font-mono text-[11.5px] leading-5 text-on-surface-variant">{state.repro.output_tail}</pre>
               )}
