@@ -1,0 +1,15 @@
+define bot refuse to respond
+  "I'm sorry, I can't respond to that."
+
+# Deterministic prompt-injection / exfiltration patterns (app/guard.py: heuristic_check).
+define flow heuristic check input
+  $blocked = execute heuristic_check(stage="input")
+  if $blocked
+    bot refuse to respond
+    stop
+
+define flow heuristic check output
+  $blocked = execute heuristic_check(stage="output")
+  if $blocked
+    bot refuse to respond
+    stop
