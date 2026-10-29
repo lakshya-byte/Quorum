@@ -16,6 +16,8 @@ import asyncio
 import json
 import logging
 import os
+import shlex
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -32,6 +34,17 @@ BANDIT_PIN = "bandit==1.9.4"
 TOOL_IMAGE_SPEC = f"{PYTHON_IMAGE}+{BANDIT_PIN}"
 TOOL_IMAGE_CACHE = CACHE_DIR / "tool_image.json"
 SCAN_MARK = "__PATCHLOOP_BANDIT__"
+
+
+def write_tree(root: str, files: dict[str, str]) -> None:
+    """Write files under `root`, refusing any path that would land outside it (defence in depth)."""
+    base = Path(root).resolve()
+    for name, text in files.items():
+        dest = (base / name).resolve()
+        if base != dest and base not in dest.parents:
+            raise ValueError(f"path escapes the sandbox: {name!r}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(text, encoding="utf-8")
 
 
 class Sandbox(Protocol):
@@ -87,7 +100,57 @@ class LocalSandbox:
         return code, output, findings
 
     async def scan(self, target: str, code: str) -> list[Finding] | None:
-        return await bandit_local(target, code)
+        return await bandit_local(Path(target).name, code)
+
+    # ---- whole-repo runs (repo tasks) ------------------------------------------
+
+    async def checkpoint(self, files: dict[str, str]) -> str:
+        """Write the repo once; candidates run on a copy of it plus their changed files."""
+        root = tempfile.mkdtemp(prefix="patchloop-repo-")
+        write_tree(root, files)
+        return root
+
+    async def release(self, handle: str | None) -> None:
+        if handle and handle.startswith(tempfile.gettempdir()):
+            shutil.rmtree(handle, ignore_errors=True)
+
+    async def run_repo(
+        self, files: dict[str, str], command: str, timeout: int | None = None, base: str | None = None,
+        setup: str = "",
+    ) -> tuple[int, str]:
+        """Run `command` in a fresh copy of the checkpoint (`base`) with `files` overlaid."""
+        async with self._slots:
+            with tempfile.TemporaryDirectory(prefix="patchloop-run-") as tmp:
+                work = Path(tmp, "w")
+                if base:
+                    await asyncio.to_thread(shutil.copytree, base, work)
+                else:
+                    work.mkdir()
+                write_tree(str(work), files)
+                return await self._run_command(str(work), command, timeout or self.timeout)
+
+    async def _run_command(self, workdir: str, command: str, timeout: int) -> tuple[int, str]:
+        argv = shlex.split(command)
+        env = {"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": workdir,
+               "HOME": workdir, "CI": "1"}
+        if argv and argv[0] == "python":
+            argv[0] = sys.executable
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv, cwd=workdir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env,
+            )
+        except FileNotFoundError:
+            return 127, f"SANDBOX_ERROR: command not found: {argv[0] if argv else command}"
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return TIMEOUT_EXIT, "TIMEOUT"
+        except asyncio.CancelledError:
+            proc.kill()
+            raise
+        return proc.returncode or 0, out.decode("utf-8", errors="replace")[-20000:]
 
     async def _run(self, workdir: str, timeout: int) -> tuple[int, str]:
         proc = await asyncio.create_subprocess_exec(
@@ -214,7 +277,42 @@ class NebiusSandbox:
         tests, _, scan = out.partition(SCAN_MARK)
         return code, tests, parse_bandit_json(scan) if scan.strip() else None
 
+    async def checkpoint(self, files: dict[str, str]) -> Any:
+        """Upload the repo ONCE as a non-disposable instance; candidates fork from the resulting image."""
+        base = await self.prepare()
+        async with self._slots:
+            snap = await base.run(
+                shell="true", files={f"/work/{n}": t.encode() for n, t in files.items()},
+                disposable=False, timeout=120,
+            )
+        return snap if getattr(snap, "uuid", None) else base
+
+    async def release(self, handle: Any) -> None:
+        return None  # checkpoints are garbage collected by the platform
+
+    async def run_repo(
+        self, files: dict[str, str], command: str, timeout: int | None = None, base: Any = None, setup: str = "",
+    ) -> tuple[int, str]:
+        """Fork the checkpoint, overlay the changed files and run the test command in a disposable instance."""
+        image = base or await self.prepare()
+        prefix = "python -m pytest --version >/dev/null 2>&1 || pip install -q pytest >/dev/null 2>&1; " \
+            if "pytest" in command else ""
+        shell = f"cd /work && {setup + ' ; ' if setup else ''}{prefix}{command} 2>&1"
+        try:
+            async with self._slots:
+                res = await image.run(
+                    shell=shell, files={f"/work/{n}": t.encode() for n, t in files.items()},
+                    disposable=True, timeout=timeout or self.timeout,
+                )
+            return int(res.exit_code), (to_text(res.stdout) + to_text(res.stderr))[-20000:]
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("nebius repo run failed: %s", type(exc).__name__)
+            return 1, f"SANDBOX_ERROR: {type(exc).__name__}: {exc}"
+
     async def scan(self, target: str, code: str) -> list[Finding] | None:
+        target = Path(target).name
         try:
             _, out = await self._exec(
                 f"cd /work && (command -v bandit >/dev/null && bandit -f json -q {target} 2>/dev/null) || true",

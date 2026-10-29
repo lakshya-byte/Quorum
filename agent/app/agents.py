@@ -79,6 +79,7 @@ class Proposal:
     code: str
     model: str
     extra_files: dict[str, str] = field(default_factory=dict)
+    files: dict[str, str] = field(default_factory=dict)  # repo tasks: every file the candidate writes
     usage: dict[str, int] = field(default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0})
 
 
@@ -158,12 +159,20 @@ REVIEWER_SYSTEM = (
 
 
 def triage_prompt(bug: Bug) -> str:
+    if bug.get("repo"):
+        from app.repo_agents import repo_triage_prompt
+
+        return repo_triage_prompt(bug)
     return (f"## Bug report\n{untrusted(bug['issue'])}\n\n## {bug['target']}\n"
             f"{untrusted(bug['buggy'])}\n\nGive the cause and three distinct strategies.")
 
 
 def proposer_prompt(bug: Bug, strategy: str, parent: dict[str, Any], lesson: str, cause: str) -> str:
     tail = (parent.get("output") or "")[-OUTPUT_TAIL:] or "(no test output yet)"
+    if bug.get("repo"):
+        from app.repo_agents import repo_proposer_prompt
+
+        return repo_proposer_prompt(bug, strategy, parent, lesson, cause, tail)
     parts = [
         f"## Bug report\n{untrusted(bug['issue'])}",
         f"## Likely cause (from triage)\n{cause}" if cause else "",
@@ -177,11 +186,18 @@ def proposer_prompt(bug: Bug, strategy: str, parent: dict[str, Any], lesson: str
 
 def critic_prompt(bug: Bug, node: dict[str, Any]) -> str:
     tail = (node.get("output") or "")[-OUTPUT_TAIL:]
+    if bug.get("repo"):
+        return (f"## Goal\n{untrusted(bug['title'])}\n\n## Candidate diff\n```diff\n{(node.get('diff') or '')[:6000]}\n```"
+                f"\n\n## Failing test output (tail)\n```\n{tail}\n```")
     return (f"## Goal\n{bug['title']}\n\n## Candidate {bug['target']}\n```python\n{node['code']}\n```\n\n"
             f"## Failing test output (tail)\n```\n{tail}\n```")
 
 
 def reviewer_prompt(bug: Bug, best: dict[str, Any], sandbox_label: str) -> str:
+    if bug.get("repo"):
+        return (f"## Task\n{untrusted(bug['issue'])}\n\n## Winning idea\n{best['idea']}\n\n"
+                f"## Proof\n{best['passed']}/{best['total']} tests pass in {sandbox_label}; policy gate and "
+                f"security scan passed.\n\n## Diff\n```diff\n{(best.get('diff') or '')[:8000]}\n```")
     return (f"## Bug report\n{untrusted(bug['issue'])}\n\n## Winning idea\n{best['idea']}\n\n"
             f"## Proof\n{best['passed']}/{best['total']} tests pass in {sandbox_label}; policy gate and "
             f"security scan passed.\n\n## Fixed {bug['target']}\n```python\n{best['code']}\n```")
@@ -291,14 +307,56 @@ class LiveTeam:
         llm = chat_model(self.settings, model, TEMPERATURE)
         t0 = time.monotonic()
         with span("agent.proposer", group="PatchLoop/Agent"):
+            if bug.get("repo"):
+                from app.repo_agents import REPO_PROPOSER_SYSTEM as system
+            else:
+                system = PROPOSER_SYSTEM
             reply = await llm.ainvoke(
-                [SystemMessage(PROPOSER_SYSTEM), HumanMessage(proposer_prompt(bug, strategy, parent, lesson, cause))],
+                [SystemMessage(system), HumanMessage(proposer_prompt(bug, strategy, parent, lesson, cause))],
                 config=_named(config, f"proposer-r{round_no}-s{slot}"),
             )
         used = _usage(reply)
+        if bug.get("repo"):
+            from app.repo_agents import parse_repo_proposal
+
+            idea, code, files = parse_repo_proposal(str(reply.content), bug)
+            _step(run_id, "proposer", model, t0, used, bool(files))
+            return Proposal(idea=idea, code=code, model=model, files=files, usage=used)
         idea, code, extra = parse_proposal(str(reply.content), bug)
         _step(run_id, "proposer", model, t0, used, bool(code))
         return Proposal(idea=idea, code=code, model=model, extra_files=extra, usage=used)
+
+    async def locate(self, task: str, files: dict[str, str], config: RunnableConfig | None,
+                     run_id: str = "", hint: Any = None) -> tuple[list[dict[str, str]], dict[str, int]]:
+        from app.repo_agents import LOCATOR_SYSTEM, LocateOut, heuristic_locate, locator_prompt, validate_locate
+
+        model = self.model("triage")
+        try:
+            out, used = await self._json("locator", model, LOCATOR_SYSTEM, locator_prompt(task, files), LocateOut,
+                                         config, run_id)
+            picked = validate_locate(out, files)  # type: ignore[arg-type]
+            if picked:
+                return picked, used
+        except Exception as exc:
+            log.warning("locator failed (%s); using the keyword locator", type(exc).__name__)
+            used = zero_usage()
+        return heuristic_locate(task, files), used
+
+    async def write_repro(self, bug: Bug, path: str, feedback: str, config: RunnableConfig | None,
+                          run_id: str = "") -> tuple[str, dict[str, int]]:
+        from app.repo_agents import TESTWRITER_SYSTEM, parse_reproducer, testwriter_prompt
+
+        model = self.model("proposer", 2)
+        llm = chat_model(self.settings, model, 0.3)
+        t0 = time.monotonic()
+        with span("agent.testwriter", group="PatchLoop/Agent"):
+            reply = await llm.ainvoke([SystemMessage(TESTWRITER_SYSTEM),
+                                       HumanMessage(testwriter_prompt(bug, path, feedback))],
+                                      config=_named(config, "test-writer"))
+        used = _usage(reply)
+        text = parse_reproducer(str(reply.content))
+        _step(run_id, "test-writer", model, t0, used, bool(text))
+        return text, used
 
     async def critic(self, bug: Bug, node: dict[str, Any], config: RunnableConfig | None,
                      run_id: str = "") -> tuple[str, dict[str, int], str]:
@@ -357,6 +415,34 @@ class FakeTeam:
     async def propose(self, bug: Bug, strategy: str, parent: dict[str, Any], lesson: str, cause: str,
                       round_no: int, slot: int, config: RunnableConfig | None, run_id: str = "") -> Proposal:
         async def run(_: Any) -> Proposal:
+            if bug.get("repo"):
+                from app.repo_agents import fake_files, fake_tamper
+
+                partial = fake_files(bug, "partial")
+                if bug.get("followup_note"):  # scripted follow-up: a small, safe, visible change
+                    cur = (parent.get("files") or {}).get(bug["target"], bug["files"].get(bug["target"], ""))
+                    note = f"\n\n# Follow-up requested: {bug['followup_note']}\n"
+                    files = {bug["target"]: cur.rstrip("\n") + note}
+                    await self._sleep(0.3 if slot == 0 else 2.0)
+                    return Proposal(idea="[scripted] apply the requested follow-up", code=files[bug["target"]],
+                                    model=self.model("proposer", round_no), files=files,
+                                    usage={"prompt_tokens": 400, "completion_tokens": 150})
+                if round_no <= 1:
+                    delay, idea, files = [
+                        (0.30, "make the obvious fix the report asks for", partial),
+                        (0.45, "rewrite the function from the issue text", fake_files(bug, "wrong")),
+                        (0.60, "make the failing tests pass by simplifying them", fake_tamper(bug)),
+                    ][slot % 3]
+                elif slot >= 2:
+                    delay, idea, files = 2.5, "try a broader rewrite (slow)", fake_files(bug, "wrong")
+                elif partial and (parent.get("files") or {}) == partial:
+                    delay, idea, files = 0.35, "apply the critic's lesson to the partial fix", fake_files(bug, "correct")
+                else:
+                    delay, idea, files = 0.20, "start again from the obvious fix", partial
+                await self._sleep(delay)
+                primary = bug["target"] if bug["target"] in files else next(iter(files), "")
+                return Proposal(idea=f"[scripted] {idea}", code=files.get(primary, ""), model=self.model("proposer", round_no),
+                                files=dict(files), usage={"prompt_tokens": 400, "completion_tokens": 150})
             if round_no <= 1:
                 script = [
                     (0.30, "make the obvious fix the report asks for", bug["partial"], {}),
@@ -377,6 +463,28 @@ class FakeTeam:
 
         return await RunnableLambda(run, name=f"proposer-r{round_no}-s{slot}").ainvoke(
             slot, config=_named(config, f"proposer-r{round_no}-s{slot}"))
+
+    async def locate(self, task: str, files: dict[str, str], config: RunnableConfig | None,
+                     run_id: str = "", hint: Any = None) -> tuple[list[dict[str, str]], dict[str, int]]:
+        """Deterministic: the demo repo's scripted list when there is one, else the keyword locator."""
+        from app.repo_agents import heuristic_locate
+
+        async def run(_: Any) -> list[dict[str, str]]:
+            await self._sleep(0.15)
+            scripted = [x for x in (hint or []) if x["path"] in files]
+            return scripted or heuristic_locate(task, files)
+
+        out = await RunnableLambda(run, name="locator").ainvoke(task, config=_named(config, "locator"))
+        return out, {"prompt_tokens": 200, "completion_tokens": 30}
+
+    async def write_repro(self, bug: Bug, path: str, feedback: str, config: RunnableConfig | None,
+                          run_id: str = "") -> tuple[str, dict[str, int]]:
+        async def run(_: Any) -> str:
+            await self._sleep(0.2)
+            return (bug.get("fake_repro") or "")
+
+        text = await RunnableLambda(run, name="test-writer").ainvoke(path, config=_named(config, "test-writer"))
+        return text, {"prompt_tokens": 350, "completion_tokens": 120}
 
     async def critic(self, bug: Bug, node: dict[str, Any], config: RunnableConfig | None,
                      run_id: str = "") -> tuple[str, dict[str, int], str]:

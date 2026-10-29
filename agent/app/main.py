@@ -10,7 +10,7 @@ from typing import Any, AsyncIterator, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from app.bugs import BUGS, get_bug
 from app.config import Settings, load_settings
@@ -34,6 +34,44 @@ class RunRequest(BaseModel):
     engine: Literal["graph", "loop"] | None = None
     model_override: str | None = None
     replay: bool = False
+
+
+class RepoRef(BaseModel):
+    full_name: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
+    branch: str = Field(default="main", pattern=r"^[A-Za-z0-9_./-]{1,100}$")
+
+    @model_validator(mode="after")
+    def no_dot_segments(self) -> "RepoRef":
+        parts = self.full_name.split("/") + self.branch.split("/")
+        if any(p in (".", "..", "") for p in parts) or self.branch.endswith(".lock"):
+            raise ValueError("invalid repository or branch name")
+        return self
+
+
+class FollowupBody(BaseModel):
+    pr_branch: str = Field(pattern=r"^patchloop/[A-Za-z0-9_./-]{1,150}$")
+    pr_number: int = Field(ge=0)
+    message: str = Field(min_length=1, max_length=4000)
+    previous_files: dict[str, str] = Field(default_factory=dict)
+
+
+class RepoRunRequest(BaseModel):
+    """POST /repo-runs. `github_token` is a per-run credential: SecretStr keeps it out of reprs and logs."""
+
+    task: str = Field(min_length=1, max_length=4000)
+    repo: RepoRef
+    github_token: SecretStr | None = None
+    user_id: str | None = None
+    engine: Literal["graph", "loop"] | None = None
+    auto_pr: bool = True
+    run_url: str = Field(default="", max_length=500, pattern=r"^(https?://\S*)?$")
+    followup: FollowupBody | None = None
+    source: Literal["web", "cli", "slack", "github", "api"] = "api"
+    issue_ref: int | None = Field(default=None, ge=1)
+
+
+class PRRequest(BaseModel):
+    github_token: SecretStr | None = None
 
 
 def sse(event: dict[str, Any]) -> str:
@@ -77,6 +115,12 @@ def build_router(registry: RunRegistry) -> APIRouter:
         return [{"id": b["id"], "title": b["title"], "issue": b["issue"], "tier": b.get("tier", "easy")}
                 for b in BUGS.values()]
 
+    @router.get("/demo-repos")
+    async def demo_repos() -> list[dict[str, Any]]:
+        from app.repo_loader import list_demo_repos
+
+        return list_demo_repos()
+
     @router.post("/runs")
     async def create_run(body: RunRequest, request: Request) -> dict[str, Any]:
         bug = get_bug(body.bug_id)
@@ -108,9 +152,42 @@ def build_router(registry: RunRegistry) -> APIRouter:
     async def get_run(run_id: str) -> dict[str, Any]:
         return require_run(run_id).public()
 
+    @router.post("/repo-runs")
+    async def create_repo_run(body: RepoRunRequest, request: Request) -> dict[str, Any]:
+        from app.repo_flow import RepoSpec, resolve_demo
+        from app.repo_loader import demo_names
+
+        fake = registry.settings.mode == "fake"
+        if body.repo.full_name.startswith("demo/") and resolve_demo(body.repo.full_name, fake) is None:
+            raise HTTPException(404, f"unknown demo repo; available: {', '.join('demo/' + n for n in demo_names())}")
+        trace_id, trace_headers = trace_from(request)
+        trace_id_var.set(trace_id)
+        fu = body.followup
+        spec = RepoSpec(
+            task=body.task, full_name=body.repo.full_name, branch=body.repo.branch,
+            token=body.github_token.get_secret_value() if body.github_token else "", auto_pr=body.auto_pr,
+            user_id=body.user_id, engine=body.engine, run_url=body.run_url, source=body.source,
+            issue_ref=body.issue_ref, followup=fu.model_dump() if fu else None,
+        )
+        run = registry.start_repo(spec, trace_id, trace_headers)
+        log.info("repo run started repo=%s source=%s mode=%s", run.repo, run.source, run.mode,
+                 extra={"run_id": run.run_id, "trace_id": trace_id})
+        return {"run_id": run.run_id, "mode": run.mode, "engine": run.engine, "trace_id": trace_id}
+
     @router.post("/runs/{run_id}/pr")
-    async def create_pr(run_id: str) -> dict[str, str]:
+    async def create_pr(run_id: str, body: PRRequest | None = None) -> dict[str, Any]:
         run = require_run(run_id)
+        if run.kind == "repo":
+            from app.repo_flow import PRError, open_run_pr, pr_info
+
+            if run.pr_url:
+                return pr_info(run)
+            token = body.github_token.get_secret_value() if body and body.github_token else ""
+            try:
+                return await open_run_pr(registry, run, token)
+            except PRError as exc:
+                code = 400 if "not solved" in str(exc) or "token is required" in str(exc) else 502
+                raise HTTPException(code, str(exc)) from None
         if run.pr_url:
             return {"url": run.pr_url}
         done = run.done_event()

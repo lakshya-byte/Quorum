@@ -197,10 +197,52 @@ rate; run `python scripts/eval.py --engine single --n 5 --tier hard --live` and 
 | `scripts/06_benchmark.py [N] [--live]` | legacy single-shot vs loop benchmark (easy bugs) |
 | `scripts/eval.py` | evals (above) |
 
+## Repo tasks (`POST /repo-runs`)
+
+Point the team at a whole repository and a plain-English task; it opens a PR from a `patchloop/*` branch.
+
+```bash
+curl -X POST localhost:8001/repo-runs -H "X-Agent-Secret: $AGENT_SHARED_SECRET" -H 'content-type: application/json' \
+  -d '{"task":"Checkout totals are wrong with coupons","repo":{"full_name":"demo/shop-api","branch":"main"},
+       "github_token":null,"auto_pr":true,"source":"web","run_url":"https://app.example/runs/1"}'
+curl -N localhost:8001/runs/<run_id>/events -H "X-Agent-Secret: ..."     # SSE
+```
+
+Body: `task` (<=4000), `repo{full_name,branch}`, `github_token` (per run, the short-lived GitHub App installation
+token), `user_id`, `engine` (repo runs always use the graph engine), `auto_pr`, `run_url` (linked in the PR body),
+`source` (`web|cli|slack|github`), `issue_ref` (adds `Fixes #n`), and `followup{pr_branch,pr_number,message,previous_files}`.
+`POST /runs/{id}/pr {github_token}` opens the PR later (idempotent). `GET /demo-repos` lists the bundled repos.
+
+Event order: `run_started`, `repo`, `guard`, `locate`, `repro`, `triage`, `node`(baseline), `round`, `node`..., `critic`,
+`done`, `guard`(output), `pr`, `end`. The input guard runs right after `repo` (before any agent reads the
+task) instead of after `repro`: issue/alert text is untrusted, so it is checked first and wrapped in `<untrusted>` tags in every prompt.
+
+- **Repo loading** (`repo_loader.py`): GitHub tarball with the token (25 MB / 3000 files / 200 KB per file; skips vendor
+  and binary files; symlinks, hardlinks, traversal and absolute paths are dropped). `demo/<name>` (or any name in fake mode)
+  loads a bundled offline repo from `app/demo_repos/` (`shop-api` needs a 2-file fix, `wordstats`, `booking`).
+- **Detection** (`repo_detect.py`): Python unittest/pytest (solid), `npm test` and `go test ./...` (best-effort, marked
+  `support: best-effort`; reproducer writing is Python only).
+- **Agents**: locator (live LLM, deterministic keyword/scripted in fake), test-writer (reproducer accepted only if it
+  FAILS on the original and is not a broken test), multi-file proposers, critic, reviewer. All run through the existing LangGraph engine
+  via an adapter (`repo_eval.py`); success = reproducer and existing suite pass. The first passing candidate cancels the siblings.
+- **Gate**: every path is validated (no traversal, `.git`/`.github`, existing tests are immutable, only the byte-identical
+  reproducer may be a new test, <=10 files, AST rules on Python), bandit runs on every changed file against its original.
+- **PR** (`repo_pr.py`): blobs -> tree -> one commit -> ref -> pull request through the GitHub git-data API, on `patchloop/<slug>-<unix>`
+  only (enforced in code). Follow-ups push ONE new commit to the same branch and emit `pr` with `updated:true`. Demo repos get a fake PR
+  (`fake:true`, `https://github.com/demo/<repo>/pull/<n>`). The service has no call that completes a PR; a test greps for it.
+- **Token hygiene**: held in memory on the run object only, `SecretStr` in the request, redacted from errors, cleared after the PR
+  attempt; tests scan events, the saved record, API output and logs for it.
+- **Real repos run their tests only in a Nebius Sandbox** (live mode); on the agent host only with `ALLOW_LOCAL_REPO_EXEC=1`.
+- `done` carries `usage` (tokens, `cost_usd` when `PRICE_IN_PER_MTOK`/`PRICE_OUT_PER_MTOK` are set, `latency_ms`,
+  `time_to_first_event_ms`) and `safety{guard, policy, security}`. LangSmith metadata and the `PatchLoopRun` New Relic event carry
+  run_id, repo, source, kind, cost.
+- Completion callback adds `kind:"repo"`, `repo`, `branch`, `task`, `pr_url`, `pr_number`, `pr_branch`, `files_changed`,
+  `safety`, `usage`, and is sent after the PR attempt.
+
 ## Tests
 
 ```bash
-pytest -q      # fake mode, no network
+pytest -q      # fake mode, no network (2 guard tests need nemoguardrails installed)
 ```
 
 ## Not verifiable in the build environment

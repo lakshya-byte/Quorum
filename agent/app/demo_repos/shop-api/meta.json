@@ -1,0 +1,19 @@
+{
+  "name": "shop-api",
+  "description": "Checkout library: carts, shipping and percentage coupons (integer cents).",
+  "language": "python",
+  "default_branch": "main",
+  "default_task": "Checkout totals are wrong when a percentage coupon is used: the discount also reduces shipping and rounds down, so totals are off by a cent or more.",
+  "locate": [
+    {
+      "path": "shop/cart.py",
+      "reason": "Cart.total() applies the coupon to items plus shipping"
+    },
+    {
+      "path": "shop/coupons.py",
+      "reason": "apply_percent() truncates instead of rounding half up"
+    }
+  ],
+  "repro_path": "tests/test_patchloop_repro.py",
+  "fix_files": 2
+}

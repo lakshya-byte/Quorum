@@ -35,3 +35,44 @@ def score(passed: int, total: int, old_code: str, new_code: str) -> float:
         return 0.0
     penalty = PATCH_PENALTY * min(changed_lines(old_code, new_code), MAX_PENALISED_LINES)
     return max(0.0, passed / total - penalty)
+
+
+_PYTEST_COUNT = re.compile(r"(\d+) (passed|failed|errors?)\b")
+_JEST = re.compile(r"Tests:\s+(?:(\d+) failed,\s*)?(?:(\d+) passed,\s*)?(\d+) total")
+_MOCHA_PASS = re.compile(r"^\s*(\d+) passing", re.MULTILINE)
+_MOCHA_FAIL = re.compile(r"^\s*(\d+) failing", re.MULTILINE)
+_TAP = re.compile(r"^# (pass|fail) (\d+)", re.MULTILINE)
+_GO_PKG = re.compile(r"^(ok|FAIL)\s+\S+", re.MULTILINE)
+
+
+def parse_results(output: str, exit_code: int = 0, language: str = "python") -> tuple[int, int]:
+    """(passed, total) for unittest/pytest (solid) and Node/Go (best effort: falls back to the exit code)."""
+    if language == "python":
+        if _RAN.search(output):
+            return parse_unittest(output)
+        counts = {"passed": 0, "failed": 0, "error": 0}
+        last = output.strip().splitlines()[-1] if output.strip() else ""
+        for n, kind in _PYTEST_COUNT.findall(last):
+            counts["error" if kind.startswith("error") else kind] += int(n)
+        total = sum(counts.values())
+        if total and not any(m in output for m in ("SyntaxError", "ImportError", "ModuleNotFoundError")):
+            return counts["passed"], total
+        return 0, total
+    if language == "node":
+        m = _JEST.search(output)
+        if m:
+            return int(m.group(2) or 0), int(m.group(3))
+        p, f = _MOCHA_PASS.search(output), _MOCHA_FAIL.search(output)
+        if p or f:
+            ok = int(p.group(1)) if p else 0
+            return ok, ok + (int(f.group(1)) if f else 0)
+        tap = dict(_TAP.findall(output))
+        if tap:
+            return int(tap.get("pass", 0)), int(tap.get("pass", 0)) + int(tap.get("fail", 0))
+    if language == "go":
+        pkgs = _GO_PKG.findall(output)
+        if pkgs:
+            return pkgs.count("ok"), len(pkgs)
+    if output.strip() in ("TIMEOUT", "") and exit_code != 0:
+        return 0, 0
+    return (1, 1) if exit_code == 0 else (0, 1)

@@ -66,6 +66,8 @@ def gate_ok(node: Node) -> bool:
 
 
 def is_solved(node: Node) -> bool:
+    if node.get("baseline"):  # repo runs: the untouched original is a reference, never a solution
+        return False
     return node["total"] > 0 and node["passed"] == node["total"] and gate_ok(node)
 
 
@@ -91,8 +93,19 @@ async def evaluate_candidate(
     started: float | None = None,
     tokens: int = 0,
     skip_policy: bool = False,
+    files: dict[str, str] | None = None,
 ) -> Node:
-    """Build a fully evaluated node. `extra_files` are other files the candidate tried to write."""
+    """Build a fully evaluated node. `extra_files` are other files the candidate tried to write.
+    Repo tasks (bug["repo"]) take the whole multi-file candidate in `files`."""
+    if bug.get("repo"):
+        from app.repo_eval import evaluate_repo_candidate
+
+        return await evaluate_repo_candidate(
+            bug, sandbox, node_id=node_id, parent=parent, depth=depth, idea=idea,
+            files=files if files is not None else {bug["target"]: code, **(extra_files or {})}, model=model,
+            strategy=strategy, timeout=timeout, max_diff_lines=max_diff_lines, started=started, tokens=tokens,
+            skip_policy=skip_policy,
+        )
     t0 = started if started is not None else time.monotonic()
     changed = {bug["target"]: code, **(extra_files or {})}
     if skip_policy:  # node 0: the original buggy code is the reference, not an AI candidate
