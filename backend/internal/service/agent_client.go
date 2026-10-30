@@ -203,6 +203,20 @@ type AgentRepoRunRequest struct {
 	Source      string         `json:"source,omitempty"`
 	IssueRef    *int           `json:"issue_ref,omitempty"`
 	Followup    *AgentFollowup `json:"followup,omitempty"`
+
+	// Swarm (CONTRACT-V3 §3). Limits are already clamped by the backend.
+	TaskType string            `json:"task_type,omitempty"`
+	Strict   []string          `json:"strict,omitempty"`
+	Limits   *AgentLimits      `json:"limits,omitempty"`
+	Answers  map[string]string `json:"answers,omitempty"`
+}
+
+// AgentLimits are the per-run swarm budgets the agent enforces (it clamps
+// again against its own env caps).
+type AgentLimits struct {
+	MaxWorkers int   `json:"max_workers,omitempty"`
+	MaxTokens  int64 `json:"max_tokens,omitempty"`
+	MaxWallS   int   `json:"max_wall_s,omitempty"`
 }
 
 type AgentRepoRunResponse struct {

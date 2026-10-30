@@ -122,6 +122,7 @@ func Build(cfg *config.Config, st Stores, auth Auth, nr *newrelic.Application, t
 	runService := service.NewRunService(st.Runs, agent, notifier, nr, service.RunServiceConfig{
 		LiveRunsPerUserPerDay: cfg.LiveRunsPerUserPerDay,
 		PublicAppURL:          cfg.PublicAppURL,
+		Swarm:                 service.SwarmCaps{MaxWorkers: cfg.SwarmMaxWorkersCap, MaxTokens: int64(cfg.SwarmMaxTokensCap), MaxWallS: cfg.SwarmMaxWallSCap},
 	})
 	runService.SetGitHub(github)
 	runService.SetNotifications(st.Notifications)

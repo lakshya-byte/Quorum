@@ -51,17 +51,19 @@ type RunService struct {
 
 	livePerDay int
 	publicURL  string
+	caps       SwarmCaps
 	now        func() time.Time
 }
 
 type RunServiceConfig struct {
 	LiveRunsPerUserPerDay int
 	PublicAppURL          string
+	Swarm                 SwarmCaps // ceilings for per-task limits (zero = defaults)
 }
 
 func NewRunService(runs RunStore, agent *AgentClient, slack *SlackNotifier, nr *newrelic.Application, cfg RunServiceConfig) *RunService {
 	return &RunService{runs: runs, agent: agent, slack: slack, nr: nr, livePerDay: cfg.LiveRunsPerUserPerDay,
-		publicURL: strings.TrimRight(cfg.PublicAppURL, "/"), now: time.Now}
+		publicURL: strings.TrimRight(cfg.PublicAppURL, "/"), caps: cfg.Swarm.withDefaults(), now: time.Now}
 }
 
 func (s *RunService) Agent() *AgentClient { return s.agent }
@@ -188,6 +190,13 @@ type RepoRunInput struct {
 	Issue    *models.IssueRef
 	Parent   *models.Run // set for follow-ups
 	Followup string      // the "ask for changes" message
+
+	// Swarm (CONTRACT-V3). TaskType ""/"auto" lets the planner choose.
+	TaskType  string
+	Strict    []string
+	Limits    *models.Limits    // clamped to the configured caps by StartRepoRun
+	Answers   map[string]string // clarifying answers for a needs_input re-run
+	AnswerFor *models.Run       // the needs_input run being answered
 }
 
 // redact removes secrets from an error before it is logged or returned.
@@ -236,6 +245,14 @@ func (s *RunService) StartRepoRun(ctx context.Context, in RepoRunInput) (*models
 	if in.Engine != "" && in.Engine != "loop" && in.Engine != "graph" {
 		return nil, ErrInvalidEngine
 	}
+	taskType, strict, err := ValidateTaskOptions(in.TaskType, in.Strict)
+	if err != nil {
+		return nil, err
+	}
+	limits, _, err := s.ClampLimits(in.Limits)
+	if err != nil {
+		return nil, err
+	}
 	if s.github == nil {
 		return nil, ErrGitHubNotConnected
 	}
@@ -278,6 +295,11 @@ func (s *RunService) StartRepoRun(ctx context.Context, in RepoRunInput) (*models
 		UserID: in.UserID, Kind: models.RunKindRepo, Source: in.Source, Engine: in.Engine,
 		Repo: in.Repo, Branch: branch, Task: task, AutoPR: in.AutoPR, Slack: in.Slack, Issue: in.Issue,
 		BugID: in.Repo, Status: models.RunStatusRunning, Nodes: []any{},
+		TaskType: taskType, Strict: strict, Limits: limits,
+	}
+	run.TaskTypeSource = "auto"
+	if taskType != models.TaskTypeAuto {
+		run.TaskTypeSource = "user"
 	}
 	if run.Source == "" {
 		run.Source = models.SourceWeb
@@ -285,6 +307,7 @@ func (s *RunService) StartRepoRun(ctx context.Context, in RepoRunInput) (*models
 	req := AgentRepoRunRequest{
 		Task: task, Repo: AgentRepoRef{FullName: in.Repo, Branch: branch}, UserID: in.UserID,
 		Engine: in.Engine, AutoPR: in.AutoPR, Source: run.Source,
+		TaskType: taskType, Strict: strict, Limits: agentLimits(limits), Answers: in.Answers,
 	}
 	if auth.Token != "" {
 		t := auth.Token
@@ -317,6 +340,26 @@ func (s *RunService) StartRepoRun(ctx context.Context, in RepoRunInput) (*models
 		req.Repo.Branch = in.Parent.Branch
 		req.Followup = &AgentFollowup{PRBranch: in.Parent.PRBranch, PRNumber: in.Parent.PRNumber,
 			Message: in.Followup, PreviousFiles: BestFiles(in.Parent)}
+	}
+	if in.AnswerFor != nil {
+		// Answering clarifying questions: a child run on the same repo and
+		// branch, counted against the same per-chain cap as follow-ups.
+		root := in.AnswerFor.ParentRunID
+		if root == "" {
+			root = in.AnswerFor.ID.Hex()
+		}
+		n, err := s.runs.CountChildren(ctx, root)
+		if err != nil {
+			return nil, err
+		}
+		if n >= maxFollowups {
+			return nil, ErrFollowupLimit
+		}
+		run.ParentRunID = root
+		run.Branch = in.AnswerFor.Branch
+		run.Task = in.AnswerFor.Task
+		req.Task = in.AnswerFor.Task
+		req.Repo.Branch = in.AnswerFor.Branch
 	}
 	if err := s.runs.Create(ctx, run); err != nil {
 		return nil, err
@@ -447,6 +490,7 @@ func (s *RunService) Followup(ctx context.Context, run *models.Run, source, mess
 	return s.StartRepoRun(ctx, RepoRunInput{
 		UserID: run.UserID, Repo: run.Repo, Branch: run.Branch, Task: run.Task, Source: source,
 		Slack: slack, Issue: run.Issue, Parent: run, Followup: message, AutoPR: true,
+		TaskType: taskTypeHint(run), Strict: run.Strict, Limits: run.Limits,
 	})
 }
 
@@ -474,7 +518,7 @@ func (s *RunService) OpenPR(ctx context.Context, run *models.Run) (string, error
 		return "", err
 	}
 	run.PRURL, run.PRNumber, run.PRBranch = pr.URL, pr.Number, pr.Branch
-	if run.Solved {
+	if run.HasPatch() {
 		s.notify(ctx, run, "pr_opened", "Pull request opened", fmt.Sprintf("%s: %s", run.Repo, pr.URL))
 		s.notifySlack(ctx, run, "pr_opened")
 	}
@@ -503,6 +547,15 @@ type CompletePayload struct {
 	FilesChanged any            `json:"files_changed"`
 	Safety       map[string]any `json:"safety"`
 	LangsmithURL string         `json:"langsmith_url"`
+
+	// Swarm (CONTRACT-V3 §5): all optional, so a legacy agent keeps working.
+	TaskType  string         `json:"task_type"`
+	Outcome   string         `json:"outcome"`
+	Criteria  any            `json:"criteria"` // {hard_pass, hard_total, advisory:[...]}
+	Agents    map[string]any `json:"agents"`   // {spawned, peak_parallel}
+	Plan      map[string]any `json:"plan"`
+	Artifacts []any          `json:"artifacts"`
+	Questions []any          `json:"questions"`
 }
 
 func costFromUsage(u map[string]any) *models.Cost {
@@ -535,12 +588,51 @@ func (s *RunService) Complete(ctx context.Context, agentRunID string, p Complete
 		err           error
 	)
 	bp, bt := bestTests(p.Nodes, p.BestNodeID)
+
+	// Swarm fields. The outcome decides `solved` (solved == outcome complete).
+	outcome := resolveOutcome(p.Outcome, p.Solved)
+	solved := outcome == models.OutcomeComplete
+	taskType := strings.ToLower(strings.TrimSpace(p.TaskType))
+	if taskType == "" && p.Plan != nil {
+		taskType, _ = p.Plan["task_type"].(string)
+	}
+	if !models.ValidTaskType(taskType) {
+		taskType = ""
+	}
+	source, _ := p.Plan["task_type_source"].(string)
+	if source != "auto" && source != "user" {
+		source = ""
+	}
+	questions := cleanQuestions(p.Questions)
+	if outcome == models.OutcomeNeedsInput && len(questions) == 0 {
+		questions = s.clarifyFromEvents(ctx, agentRunID)
+	}
+	artifacts := SanitizeArtifactIndex(p.Artifacts)
+	if len(artifacts) == 0 && p.Plan != nil && outcome != models.OutcomeNeedsInput {
+		// The callback carries no index: ask the agent (bounded, best effort).
+		lctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		if items, err := s.agent.ListArtifacts(lctx, agentRunID); err == nil {
+			raw := make([]any, 0, len(items))
+			for _, it := range items {
+				raw = append(raw, it)
+			}
+			artifacts = SanitizeArtifactIndex(raw)
+		}
+		cancel()
+	}
+	var spawned, peak int
+	if p.Agents != nil {
+		spawned, peak = intOf(p.Agents, "spawned"), intOf(p.Agents, "peak_parallel", "peakParallel")
+	}
 	for attempt := 0; attempt < 20; attempt++ {
 		before, after, err = s.runs.Complete(ctx, agentRunID, repository.RunCompletion{
-			Mode: p.Mode, Engine: p.Engine, Solved: p.Solved, BestNodeID: p.BestNodeID,
+			Mode: p.Mode, Engine: p.Engine, Solved: solved, BestNodeID: p.BestNodeID,
 			Nodes: p.Nodes, Usage: p.Usage, LatencyMs: int64(p.LatencyMs),
 			PRURL: p.PRURL, PRNumber: p.PRNumber, PRBranch: p.PRBranch, FilesChanged: countFiles(p.FilesChanged), BestPassed: bp, BestTotal: bt,
 			Safety: p.Safety, Cost: costFromUsage(p.Usage), LangsmithURL: p.LangsmithURL,
+			Outcome: outcome, TaskType: taskType, TaskTypeSource: source, Plan: p.Plan,
+			CriteriaSummary: criteriaSummary(p.Criteria), AgentsSpawned: spawned, PeakParallel: peak,
+			Artifacts: artifacts, Questions: questions,
 		})
 		if !errors.Is(err, repository.ErrNotFound) {
 			break
@@ -564,6 +656,7 @@ func (s *RunService) Complete(ctx context.Context, agentRunID string, p Complete
 		"runId": after.ID.Hex(), "agentRunId": agentRunID, "bugId": after.BugID, "engine": after.Engine,
 		"mode": after.Mode, "solved": after.Solved, "latencyMs": after.LatencyMs, "nodes": len(after.Nodes),
 		"guest": after.Guest, "kind": after.Kind, "source": after.Source,
+		"outcome": after.Outcome, "taskType": after.TaskType, "agentsSpawned": after.AgentsSpawned,
 	}
 	if after.Usage != nil {
 		if v, ok := toInt(after.Usage["prompt_tokens"]); ok {
@@ -592,12 +685,14 @@ func (s *RunService) Complete(ctx context.Context, agentRunID string, p Complete
 // and (for issue-triggered runs) a GitHub comment.
 func (s *RunService) afterRepoRun(ctx context.Context, run, before *models.Run) {
 	switch {
-	case run.PRURL != "" && run.Solved && run.ParentRunID != "":
+	case run.PRURL != "" && run.HasPatch() && run.ParentRunID != "":
 		s.notify(ctx, run, "pr_updated", "Pull request updated", fmt.Sprintf("%s: new commit pushed to %s", run.Repo, run.PRURL))
-	case run.PRURL != "" && run.Solved:
+	case run.PRURL != "" && run.HasPatch():
 		s.notify(ctx, run, "pr_opened", "Pull request opened", fmt.Sprintf("%s: %s", run.Repo, run.PRURL))
-	case !run.Solved:
-		s.notify(ctx, run, "failed", "No passing fix found", fmt.Sprintf("%s: PatchLoop could not produce a fix that passes the tests", run.Repo))
+	case run.Outcome == models.OutcomeNeedsInput:
+		s.notify(ctx, run, "needs_input", "PatchLoop needs more information", fmt.Sprintf("%s: answer the questions to continue: %s", run.Repo, s.RunURL(run)))
+	case !run.HasPatch():
+		s.notify(ctx, run, "failed", "No passing fix found", fmt.Sprintf("%s: PatchLoop could not produce a change that passes its checks", run.Repo))
 	}
 	if s.observer != nil && run.Slack != nil {
 		s.observer.RunCompleted(ctx, run)

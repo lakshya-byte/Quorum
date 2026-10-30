@@ -37,13 +37,19 @@ func serviceError(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrNeedUserAuth):
 		apiError(c, http.StatusConflict, "github_reauth", err.Error())
 	case errors.Is(err, service.ErrInvalidBugID), errors.Is(err, service.ErrInvalidEngine), errors.Is(err, service.ErrInvalidRepo),
-		errors.Is(err, service.ErrInvalidBranch), errors.Is(err, service.ErrInvalidTask):
+		errors.Is(err, service.ErrInvalidBranch), errors.Is(err, service.ErrInvalidTask),
+		errors.Is(err, service.ErrInvalidTaskType), errors.Is(err, service.ErrInvalidStrict), errors.Is(err, service.ErrInvalidLimits),
+		errors.Is(err, service.ErrInvalidAnswers), errors.Is(err, service.ErrArtifactInvalid):
 		apiError(c, http.StatusBadRequest, "bad_request", err.Error())
 	case errors.Is(err, service.ErrRepoNotGranted):
 		apiError(c, http.StatusForbidden, "repo_not_granted", err.Error())
+	case errors.Is(err, service.ErrArtifactNotFound):
+		apiError(c, http.StatusNotFound, "not_found", "artifact not found")
+	case errors.Is(err, service.ErrArtifactTooLarge), errors.Is(err, service.ErrArtifactType):
+		apiError(c, http.StatusBadGateway, "bad_artifact", "the artifact cannot be served")
 	case errors.Is(err, service.ErrRunNotFound):
 		apiError(c, http.StatusNotFound, "not_found", "run not found")
-	case errors.Is(err, service.ErrRunNotReady), errors.Is(err, service.ErrNoPR), errors.Is(err, service.ErrRunNotDone):
+	case errors.Is(err, service.ErrRunNotReady), errors.Is(err, service.ErrNoPR), errors.Is(err, service.ErrRunNotDone), errors.Is(err, service.ErrNotNeedsInput):
 		apiError(c, http.StatusConflict, "conflict", err.Error())
 	case errors.Is(err, service.ErrFollowupLimit):
 		apiError(c, http.StatusTooManyRequests, "rate_limited", err.Error())
