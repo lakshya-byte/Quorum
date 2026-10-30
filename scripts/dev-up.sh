@@ -7,7 +7,7 @@
 # Portable bash (Linux + macOS): no GNU-only flags, no `timeout`, no `sed -i`.
 #
 # Optional env:
-#   PATCHLOOP_MODE=fake|hybrid|live  agent mode (default fake; hybrid/live need NEBIUS_* keys in agent/.env)
+#   PATCHLOOP_MODE=fake|hybrid|live  agent mode (overrides agent/.env; default: agent/.env, else fake; hybrid/live need NEBIUS_* keys in agent/.env)
 #   FRONTEND_MODE=dev|prod           next dev (default) or next build + next start
 #   MONGO_DB_NAME=patchloop          backend database
 #   FAKE_DELAY_SCALE=1.0             agent fake-mode pacing (1.0 = demo speed)
@@ -99,7 +99,8 @@ say "agent venv: $VENV"
   export PATH="$VENV/bin:$PATH"
   export PORT="$AGENT_PORT" HOST=127.0.0.1
   export AGENT_SHARED_SECRET BACKEND_CALLBACK_URL="http://localhost:$BACKEND_PORT"
-  export PATCHLOOP_MODE="${PATCHLOOP_MODE:-fake}"
+  # Only override agent/.env when set in the shell; the agent defaults to fake itself.
+  [ -n "${PATCHLOOP_MODE:-}" ] && export PATCHLOOP_MODE
   export FAKE_DELAY_SCALE="${FAKE_DELAY_SCALE:-1.0}"
   nohup sh scripts/serve.sh >"$LOGS/agent.log" 2>&1 &
   echo $! >"$LOGS/agent.pid"
@@ -142,7 +143,7 @@ wait_http "http://localhost:$FRONTEND_PORT/" 180 frontend "$LOGS/frontend.log"
 
 cat <<EOF
 
-PatchLoop is up (agent mode: ${PATCHLOOP_MODE:-fake}, frontend: $FRONTEND_MODE)
+PatchLoop is up (agent mode: ${PATCHLOOP_MODE:-from agent/.env}, frontend: $FRONTEND_MODE)
   frontend  http://localhost:$FRONTEND_PORT   (try /try as a guest)
   backend   http://localhost:$BACKEND_PORT    (DEV_MODE=true: OTPs at /internal/dev/otp)
   agent     http://localhost:$AGENT_PORT      (internal; X-Agent-Secret)
