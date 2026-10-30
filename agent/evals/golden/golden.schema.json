@@ -1,0 +1,505 @@
+{
+  "$defs": {
+    "Case": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{2,60}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "category": {
+          "enum": [
+            "bug_fix_single_file",
+            "bug_fix_multi_file",
+            "locator_retrieval",
+            "reproducer_quality",
+            "safety_guardrails",
+            "unsolvable_or_underspecified",
+            "followup_change_request",
+            "pr_quality"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "difficulty": {
+          "enum": [
+            "easy",
+            "medium",
+            "hard"
+          ],
+          "title": "Difficulty",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 3,
+          "title": "Title",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "input": {
+          "$ref": "#/$defs/CaseInput"
+        },
+        "expected": {
+          "$ref": "#/$defs/Expected"
+        },
+        "reference": {
+          "$ref": "#/$defs/Reference"
+        },
+        "rubric": {
+          "description": "criteria for LLM judges",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Rubric",
+          "type": "array"
+        },
+        "metadata": {
+          "$ref": "#/$defs/Metadata"
+        }
+      },
+      "required": [
+        "id",
+        "category",
+        "difficulty",
+        "title",
+        "input",
+        "expected",
+        "reference",
+        "rubric"
+      ],
+      "title": "Case",
+      "type": "object"
+    },
+    "CaseInput": {
+      "additionalProperties": false,
+      "properties": {
+        "task": {
+          "description": "what a real user typed; vague where realistic",
+          "minLength": 3,
+          "title": "Task",
+          "type": "string"
+        },
+        "repo": {
+          "description": "bundled bug id (e.g. 'paginate') or a demo repo ('demo/shop-api')",
+          "minLength": 1,
+          "title": "Repo",
+          "type": "string"
+        },
+        "source": {
+          "default": "web",
+          "enum": [
+            "web",
+            "cli",
+            "slack",
+            "github"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "alert": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "optional pasted alert / stack trace / error text",
+          "title": "Alert"
+        },
+        "issue_ref": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "GitHub issue number the PR should close",
+          "title": "Issue Ref"
+        },
+        "followup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FollowUp"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "adversarial_patch": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "safety probes: files a hostile or careless candidate tries to write",
+          "title": "Adversarial Patch"
+        }
+      },
+      "required": [
+        "task",
+        "repo"
+      ],
+      "title": "CaseInput",
+      "type": "object"
+    },
+    "Expected": {
+      "additionalProperties": false,
+      "properties": {
+        "solved": {
+          "title": "Solved",
+          "type": "boolean"
+        },
+        "expected_stage": {
+          "enum": [
+            "solved",
+            "pr_opened",
+            "blocked_guard",
+            "stopped_locate",
+            "stopped_no_signal",
+            "stopped_no_tests",
+            "unsolved_exhausted",
+            "policy_blocked",
+            "security_blocked",
+            "probe_complete"
+          ],
+          "title": "Expected Stage",
+          "type": "string"
+        },
+        "also_acceptable_stages": {
+          "description": "other honest stops a stronger agent may legitimately reach",
+          "items": {
+            "enum": [
+              "solved",
+              "pr_opened",
+              "blocked_guard",
+              "stopped_locate",
+              "stopped_no_signal",
+              "stopped_no_tests",
+              "unsolved_exhausted",
+              "policy_blocked",
+              "security_blocked",
+              "probe_complete"
+            ],
+            "type": "string"
+          },
+          "title": "Also Acceptable Stages",
+          "type": "array"
+        },
+        "locate_files": {
+          "description": "ground-truth relevant source files",
+          "items": {
+            "type": "string"
+          },
+          "title": "Locate Files",
+          "type": "array"
+        },
+        "min_files_changed": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Min Files Changed",
+          "type": "integer"
+        },
+        "max_files_changed": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Max Files Changed",
+          "type": "integer"
+        },
+        "must_not_touch": {
+          "description": "globs the fix may never change",
+          "items": {
+            "type": "string"
+          },
+          "title": "Must Not Touch",
+          "type": "array"
+        },
+        "repro_should_fail_on_original": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repro Should Fail On Original"
+        },
+        "guard_verdict": {
+          "default": "pass",
+          "enum": [
+            "pass",
+            "block"
+          ],
+          "title": "Guard Verdict",
+          "type": "string"
+        },
+        "policy_expected": {
+          "default": "n/a",
+          "enum": [
+            "pass",
+            "block",
+            "n/a"
+          ],
+          "title": "Policy Expected",
+          "type": "string"
+        },
+        "security_expected": {
+          "default": "n/a",
+          "enum": [
+            "pass",
+            "block",
+            "n/a"
+          ],
+          "title": "Security Expected",
+          "type": "string"
+        },
+        "expected_tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Expected Tools",
+          "type": "array"
+        },
+        "pr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrRequirements"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "followup_same_branch": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Followup Same Branch"
+        }
+      },
+      "required": [
+        "solved",
+        "expected_stage"
+      ],
+      "title": "Expected",
+      "type": "object"
+    },
+    "FollowUp": {
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "description": "the reviewer's change request",
+          "minLength": 3,
+          "title": "Message",
+          "type": "string"
+        },
+        "pr_branch": {
+          "minLength": 1,
+          "title": "Pr Branch",
+          "type": "string"
+        },
+        "pr_number": {
+          "minimum": 1,
+          "title": "Pr Number",
+          "type": "integer"
+        },
+        "previous_files": {
+          "const": "reference",
+          "default": "reference",
+          "description": "the PR branch already contains the reference (correct) fix",
+          "title": "Previous Files",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "pr_branch",
+        "pr_number"
+      ],
+      "title": "FollowUp",
+      "type": "object"
+    },
+    "Metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "derived_from": {
+          "default": "",
+          "title": "Derived From",
+          "type": "string"
+        },
+        "tier": {
+          "default": "",
+          "title": "Tier",
+          "type": "string"
+        },
+        "fake_script": {
+          "default": "default",
+          "enum": [
+            "default",
+            "no_reproducer",
+            "no_locator_hint"
+          ],
+          "title": "Fake Script",
+          "type": "string"
+        },
+        "notes": {
+          "default": "",
+          "title": "Notes",
+          "type": "string"
+        },
+        "author": {
+          "default": "patchloop-evals",
+          "title": "Author",
+          "type": "string"
+        }
+      },
+      "title": "Metadata",
+      "type": "object"
+    },
+    "PrRequirements": {
+      "additionalProperties": false,
+      "properties": {
+        "required_sections": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Sections",
+          "type": "array"
+        },
+        "fixes_ref": {
+          "default": false,
+          "title": "Fixes Ref",
+          "type": "boolean"
+        }
+      },
+      "title": "PrRequirements",
+      "type": "object"
+    },
+    "Reference": {
+      "additionalProperties": false,
+      "properties": {
+        "root_cause": {
+          "minLength": 10,
+          "title": "Root Cause",
+          "type": "string"
+        },
+        "fix_summary": {
+          "minLength": 3,
+          "title": "Fix Summary",
+          "type": "string"
+        },
+        "reference_files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reference Files",
+          "type": "array"
+        },
+        "reference_diff": {
+          "default": "",
+          "description": "unified diff original -> bundled `correct` fix",
+          "title": "Reference Diff",
+          "type": "string"
+        },
+        "reference_lines_changed": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Reference Lines Changed",
+          "type": "integer"
+        },
+        "key_facts": {
+          "description": "concept facts a good PR/explanation states",
+          "items": {
+            "type": "string"
+          },
+          "title": "Key Facts",
+          "type": "array"
+        },
+        "must_mention": {
+          "description": "literals derived from the diff (paths, function names)",
+          "items": {
+            "type": "string"
+          },
+          "title": "Must Mention",
+          "type": "array"
+        }
+      },
+      "required": [
+        "root_cause",
+        "fix_summary"
+      ],
+      "title": "Reference",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "dataset_version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "created": {
+      "title": "Created",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/Case"
+      },
+      "title": "Cases",
+      "type": "array"
+    }
+  },
+  "required": [
+    "dataset_version",
+    "created",
+    "cases"
+  ],
+  "title": "PatchLoop golden dataset",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://patchloop.dev/evals/golden.schema.json"
+}
