@@ -76,9 +76,11 @@ export type RunViewProps = {
   notice?: string | null;
   /** Whether a Slack webhook is configured for this user (null = unknown / not shown). */
   slackConfigured?: boolean | null;
+  /** run.slackSent from the backend (it turns true a moment after the run finished); null = unknown. */
+  slackSent?: boolean | null;
 };
 
-export default function RunView({ state, bug, run, solvedActions, onRetry, notice, slackConfigured = null }: RunViewProps) {
+export default function RunView({ state, bug, run, solvedActions, onRetry, notice, slackConfigured = null, slackSent = null }: RunViewProps) {
   const [selected, setSelected] = useState<number | null>(null);
   const onSelect = useCallback((id: number) => setSelected(id), []);
   const onClose = useCallback(() => setSelected(null), []);
@@ -95,7 +97,7 @@ export default function RunView({ state, bug, run, solvedActions, onRetry, notic
   const selNode = selected != null ? state.nodes[selected] : undefined;
   const chip = runChip(state);
   const finished = state.status === "finished" || !!done;
-  const filesChanged = run?.filesChanged ?? (best?.files ? changedFileCount(best) : null);
+  const filesChanged = best?.files ? changedFileCount(best) : run?.filesChanged || null;
 
   return (
     <div className="flex flex-col gap-5">
@@ -166,12 +168,12 @@ export default function RunView({ state, bug, run, solvedActions, onRetry, notic
           <div className="flex items-start gap-3">
             <Icon name="bug" size={18} className={state.repro.failed_on_original ? "mt-0.5 text-primary" : "mt-0.5 text-warning"} />
             <div className="min-w-0 flex-1">
-              <p className="text-[13.5px] font-medium text-white">
+              <p className="text-[13.5px] font-medium text-white [overflow-wrap:anywhere]">
                 {state.repro.failed_on_original
                   ? `Reproducer ${state.repro.test_name ? `"${state.repro.test_name}" ` : ""}fails on the original code`
                   : "Could not reproduce the bug with a new test, using the existing suite only"}
               </p>
-              {state.repro.path && <p className="font-mono text-[12px] text-on-surface-variant">{state.repro.path}</p>}
+              {state.repro.path && <p className="font-mono text-[12px] text-on-surface-variant [overflow-wrap:anywhere]">{state.repro.path}</p>}
               {state.repro.output_tail && (
                 <pre className="mt-2 max-h-32 overflow-auto rounded-md border border-border bg-bg p-2.5 font-mono text-[11.5px] leading-5 text-on-surface-variant">{state.repro.output_tail}</pre>
               )}
@@ -269,8 +271,10 @@ export default function RunView({ state, bug, run, solvedActions, onRetry, notic
       {repoRun && finished && run && (
         <p className="flex items-center gap-2 text-[12.5px] text-on-surface-variant" data-testid="slack-indicator">
           <Icon name="slack" size={14} />
-          {state.slackSent === true || (slackConfigured && state.slackSent !== false) ? (
+          {slackSent === true ? (
             <span className="text-primary">Slack notified when this run finished.</span>
+          ) : slackConfigured === true ? (
+            <span>Slack is set up; no message was sent for this run yet.</span>
           ) : slackConfigured === false ? (
             <span>
               Slack not set up.{" "}

@@ -130,6 +130,7 @@ func Build(cfg *config.Config, st Stores, auth Auth, nr *newrelic.Application, t
 	runService.SetUserWebhook(slackSettings.Webhook)
 
 	mergeService := service.NewMergeService(github, st.Runs, runService)
+	mergeService.DemoChecksDelay = time.Duration(cfg.DemoChecksDelaySec) * time.Second
 	slackAPI := service.NewSlackAPI(cfg.SlackBotToken, cfg.SlackAPIBase)
 	slackApp := service.NewSlackApp(cfg.SlackSigningSecret, slackAPI, slackSettings, runService, mergeService, github, st.Dedupe)
 	runService.SetObserver(slackApp)

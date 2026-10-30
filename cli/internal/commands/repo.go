@@ -121,7 +121,7 @@ func connectCmd() *cobra.Command {
 				if err := cl.GitHubDemo(ctx); err != nil {
 					return fail(cmd, err)
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), "Connected the demo account (offline demo repos: demo/inventory-api, demo/billing-utils, demo/text-tools).")
+				fmt.Fprintln(cmd.OutOrStdout(), "Connected the demo account (offline demo repos: demo/shop-api, demo/wordstats, demo/booking).")
 				return nil
 			}
 			if st, err := cl.GitHubStatus(ctx); err == nil && st.Connected && st.Mode == "app" {

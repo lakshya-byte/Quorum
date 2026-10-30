@@ -77,7 +77,9 @@ type Run struct {
 	Safety       map[string]any `bson:"safety,omitempty" json:"safety"`
 	TraceID      string         `bson:"trace_id,omitempty" json:"traceId"`
 	LangsmithURL string         `bson:"langsmith_url,omitempty" json:"langsmithUrl,omitempty"`
-	FilesChanged any            `bson:"files_changed,omitempty" json:"filesChanged"` // paths (or a count) as the agent reported them
+	FilesChanged int            `bson:"files_changed,omitempty" json:"filesChanged"` // number of files the fix changes
+	BestPassed   int            `bson:"best_passed,omitempty" json:"bestPassed"`     // tests the winning (or best) candidate passes; kept so lists need no nodes
+	BestTotal    int            `bson:"best_total,omitempty" json:"bestTotal"`
 	SlackSent    bool           `bson:"slack_sent" json:"slackSent"`
 	Notice       string         `bson:"notice,omitempty" json:"notice,omitempty"`
 	Guest        bool           `bson:"guest" json:"guest"`

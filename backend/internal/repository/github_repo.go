@@ -34,7 +34,10 @@ func (r *GitHubRepository) Get(ctx context.Context, userID string) (*models.GitH
 }
 
 func (r *GitHubRepository) FindByInstallation(ctx context.Context, id int64) (*models.GitHubConnection, error) {
-	return r.find(ctx, bson.M{"installation_id": id, "mode": models.GitHubModeApp})
+	if id == 0 {
+		return nil, ErrNotFound // 0 means "no installation": never match unlinked connections
+	}
+	return r.find(ctx, bson.M{"installation_id": id, "mode": bson.M{"$in": bson.A{models.GitHubModeApp, models.GitHubModeDemo}}})
 }
 
 func (r *GitHubRepository) FindByLogin(ctx context.Context, login string) (*models.GitHubConnection, error) {

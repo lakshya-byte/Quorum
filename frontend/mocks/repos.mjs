@@ -52,199 +52,80 @@ export function unifiedDiff(path, before, after, ctx = 3) {
   return out;
 }
 
-const INVENTORY = {
-  "inventory/stock.py": `class OutOfStock(Exception):
-    pass
+// The three repos are read from the agent's bundled demo repos (agent/app/demo_repos), so the mock
+// backend, the real agent and the backend's demo list always agree. Candidate patches are the agent's
+// own fixtures (fixes/wrong, fixes/partial, fixes/correct). Test counts below were measured with
+// `python -m unittest discover` on baseline + reproducer, then with each fixture applied.
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
+const DEMO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../agent/app/demo_repos");
 
-class Stock:
-    def __init__(self, items=None):
-        self.items = dict(items or {})
-        self.reserved = {}
-
-    def available(self, sku):
-        return self.items.get(sku, 0) - self.reserved.get(sku, 0)
-
-    def reserve(self, sku, qty):
-        if qty <= 0:
-            raise ValueError("qty must be positive")
-        if qty >= self.available(sku):
-            raise OutOfStock(sku)
-        self.reserved[sku] = self.reserved.get(sku, 0) + qty
-
-    def release(self, sku, qty):
-        self.reserved[sku] = self.reserved.get(sku, 0) - qty
-`,
-  "inventory/api.py": `from .stock import OutOfStock, Stock
-
-stock = Stock({"widget": 5, "gadget": 1})
-
-
-def reserve_endpoint(sku, qty):
-    try:
-        stock.reserve(sku, qty)
-    except OutOfStock:
-        return {"status": 409, "error": "out of stock"}
-    return {"status": 200, "available": stock.available(sku)}
-
-
-def release_endpoint(sku, qty):
-    stock.release(sku, qty)
-    return {"status": 200, "available": stock.available(sku)}
-`,
-  "tests/test_stock.py": `import unittest
-from inventory.stock import Stock, OutOfStock
-
-
-class StockTest(unittest.TestCase):
-    def test_reserve_last_unit(self):
-        s = Stock({"a": 1})
-        s.reserve("a", 1)
-        self.assertEqual(s.available("a"), 0)
-
-    def test_over_reserve_raises(self):
-        s = Stock({"a": 1})
-        with self.assertRaises(OutOfStock):
-            s.reserve("a", 2)
-
-    def test_release_never_negative(self):
-        s = Stock({"a": 3})
-        s.reserve("a", 1)
-        s.release("a", 5)
-        self.assertEqual(s.reserved["a"], 0)
-`,
-};
-
-const BILLING = {
-  "billing/invoice.py": `TAX_RATE = 0.2
-
-
-def total_with_tax(subtotal):
-    """Return the invoice total including tax, rounded to cents."""
-    return round(subtotal * (1 + TAX_RATE))
-
-
-def split_evenly(total, parts):
-    base = round(total / parts, 2)
-    return [base] * parts
-`,
-  "tests/test_invoice.py": `import unittest
-from billing.invoice import total_with_tax, split_evenly
-
-
-class InvoiceTest(unittest.TestCase):
-    def test_total_keeps_cents(self):
-        self.assertEqual(total_with_tax(10.00), 12.00)
-        self.assertEqual(total_with_tax(19.99), 23.99)
-
-    def test_split(self):
-        self.assertEqual(split_evenly(9.0, 3), [3.0, 3.0, 3.0])
-`,
-};
-
-const TEXT = {
-  "texttools/words.py": `def word_count(text):
-    """Count words separated by any amount of whitespace."""
-    return len([w for w in text.split(" ")])
-
-
-def longest_word(text):
-    words = text.split()
-    return max(words, key=len) if words else ""
-`,
-  "tests/test_words.py": `import unittest
-from texttools.words import word_count, longest_word
-
-
-class WordsTest(unittest.TestCase):
-    def test_simple(self):
-        self.assertEqual(word_count("hello world"), 2)
-
-    def test_multiple_spaces(self):
-        self.assertEqual(word_count("hello   world"), 2)
-
-    def test_empty(self):
-        self.assertEqual(word_count(""), 0)
-
-    def test_longest(self):
-        self.assertEqual(longest_word("a abc ab"), "abc")
-`,
-};
-
-function patch(files, edits) {
-  const out = { ...files };
-  for (const [p, from, to] of edits) out[p] = out[p].replace(from, to);
+function readTree(dir, base = dir, out = {}) {
+  if (!fs.existsSync(dir)) return out;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (e.name === "__pycache__") continue;
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) readTree(p, base, out);
+    else out[path.relative(base, p).split(path.sep).join("/")] = fs.readFileSync(p, "utf8");
+  }
   return out;
 }
 
-export const DEMO_REPOS = [
-  {
-    fullName: "demo/inventory-api",
-    description: "Tiny stock-reservation service (demo repository, Python)",
+function demoRepo(name, extra) {
+  const dir = path.join(DEMO_DIR, name);
+  const meta = JSON.parse(fs.readFileSync(path.join(dir, "meta.json"), "utf8"));
+  const files = { ...readTree(path.join(dir, "repo")), ...readTree(path.join(dir, "repro")) };
+  const fix = (v) => readTree(path.join(dir, "fixes", v));
+  const reproFile = Object.keys(readTree(path.join(dir, "repro")))[0];
+  const testName = /def (test_\w+)/.exec(files[reproFile])?.[1] || "test_reproducer";
+  return {
+    fullName: `demo/${name}`,
+    description: meta.description,
     language: "Python",
-    total: 3,
-    files: INVENTORY,
-    locate: [
-      { path: "inventory/stock.py", reason: "reserve() compares against available() with >=" },
-      { path: "inventory/api.py", reason: "release_endpoint passes through to Stock.release" },
-    ],
-    repro: { path: "tests/test_stock.py", test_name: "test_reserve_last_unit", failing: 1 },
-    cause: "Stock.reserve rejects a reservation equal to the remaining units (>= instead of >), and release() can push the reserved count below zero.",
-    strategies: ["Fix the off-by-one comparison in reserve()", "Clamp release() at zero as well", "Rewrite reserve() around a single available() check"],
+    total: extra.total,
+    files,
+    defaultTask: meta.default_task,
+    locate: meta.locate,
+    repro: { path: meta.repro_path, test_name: testName, failing: extra.baseFailing },
+    cause: extra.cause,
+    strategies: extra.strategies,
     candidates: [
-      { id: 1, parent: 0, label: "wrong", idea: "Flip the comparison in reserve() only", edits: [["inventory/stock.py", "qty >= self.available(sku)", "qty > self.available(sku) + 1"]], failing: 1 },
-      { id: 2, parent: 0, label: "partial", idea: "Fix the off-by-one in reserve()", edits: [["inventory/stock.py", "qty >= self.available(sku)", "qty > self.available(sku)"]], failing: 1 },
-      { id: 3, parent: 0, label: "policy", idea: "Patch and add a CI workflow that deploys", edits: [["inventory/stock.py", "qty >= self.available(sku)", "qty > self.available(sku)"]], blocked: ["Touches .github/: workflows are off limits"] },
-      {
-        id: 4,
-        parent: 2,
-        label: "fix",
-        idea: "Fix reserve() and clamp release() at zero",
-        edits: [
-          ["inventory/stock.py", "qty >= self.available(sku)", "qty > self.available(sku)"],
-          ["inventory/stock.py", "self.reserved[sku] = self.reserved.get(sku, 0) - qty", "self.reserved[sku] = max(0, self.reserved.get(sku, 0) - qty)"],
-          ["inventory/api.py", "    stock.release(sku, qty)\n    return", "    stock.release(sku, qty)\n    # release is idempotent: never reports a negative reservation\n    return"],
-        ],
-        failing: 0,
-      },
-      { id: 5, parent: 2, label: "security", idea: "Evaluate the quantity expression dynamically", edits: [["inventory/stock.py", "qty >= self.available(sku)", "eval('qty > self.available(sku)')"]], failing: 0, security: true },
+      { id: 1, parent: 0, label: "wrong", idea: extra.ideas.wrong, override: fix("wrong"), failing: extra.failing.wrong },
+      { id: 2, parent: 0, label: "partial", idea: extra.ideas.partial, override: fix("partial"), failing: extra.failing.partial },
+      { id: 3, parent: 0, label: "policy", idea: "Patch and add a CI workflow that deploys", override: { ...fix("correct"), ".github/workflows/deploy.yml": "on: push\n" }, blocked: ["Touches .github/: workflows are off limits"] },
+      { id: 4, parent: 2, label: "fix", idea: extra.ideas.fix, override: fix("correct"), failing: 0 },
     ],
     winner: 4,
-  },
-  {
-    fullName: "demo/billing-utils",
-    description: "Invoice totals and splitting helpers (demo repository, Python)",
-    language: "Python",
-    total: 2,
-    files: BILLING,
-    locate: [{ path: "billing/invoice.py", reason: "total_with_tax rounds to a whole number" }],
-    repro: { path: "tests/test_invoice.py", test_name: "test_total_keeps_cents", failing: 1 },
-    cause: "total_with_tax calls round() without a precision argument, so cents are dropped: 19.99 becomes 24 instead of 23.99.",
-    strategies: ["Round to 2 decimals", "Use Decimal for money maths", "Multiply by 100, round, divide"],
-    candidates: [
-      { id: 1, parent: 0, label: "wrong", idea: "Round to 1 decimal", edits: [["billing/invoice.py", "(1 + TAX_RATE))", "(1 + TAX_RATE), 1)"]], failing: 1 },
-      { id: 2, parent: 0, label: "fix", idea: "Round to 2 decimals", edits: [["billing/invoice.py", "(1 + TAX_RATE))", "(1 + TAX_RATE), 2)"]], failing: 0 },
-      { id: 3, parent: 0, label: "policy", idea: "Shell out to bc for rounding", edits: [["billing/invoice.py", "round(subtotal", "__import__('os').system('bc') or round(subtotal"]], blocked: ["Disallowed side effect: shell access in patch"] },
-    ],
-    winner: 2,
-  },
-  {
-    fullName: "demo/text-tools",
-    description: "Small text helpers (demo repository, Python)",
-    language: "Python",
-    total: 4,
-    files: TEXT,
-    locate: [{ path: "texttools/words.py", reason: "word_count splits on a single space" }],
-    repro: { path: "tests/test_words.py", test_name: "test_multiple_spaces", failing: 2 },
-    cause: "word_count uses text.split(\" \"), which yields empty strings for repeated spaces and for the empty string.",
-    strategies: ["Use str.split() with no argument", "Filter empty strings after splitting", "Count with a regular expression"],
-    candidates: [
-      { id: 1, parent: 0, label: "partial", idea: "Filter empty strings after splitting", edits: [["texttools/words.py", "return len([w for w in text.split(\" \")])", "return len([w for w in text.split(\" \") if w])"]], failing: 0 },
-      { id: 2, parent: 0, label: "fix", idea: "Use str.split() without arguments", edits: [["texttools/words.py", "return len([w for w in text.split(\" \")])", "return len(text.split())"]], failing: 0 },
-      { id: 3, parent: 0, label: "wrong", idea: "Count spaces plus one", edits: [["texttools/words.py", "return len([w for w in text.split(\" \")])", "return text.count(\" \") + 1"]], failing: 2 },
-    ],
-    winner: 2,
-  },
+  };
+}
+
+export const DEMO_REPOS = [
+  demoRepo("shop-api", {
+    total: 13,
+    baseFailing: 5,
+    cause: "Cart.total() applies the percentage coupon to items plus shipping, and apply_percent() truncates instead of rounding half up.",
+    strategies: ["Round the discount half up in coupons.py", "Discount only the items, never shipping", "Rewrite total() around a single discount helper"],
+    ideas: { wrong: "Skip the coupon when shipping is charged", partial: "Round the discount half up in coupons.py only", fix: "Round half up and keep shipping out of the discount (2 files)" },
+    failing: { wrong: 6, partial: 3 },
+  }),
+  demoRepo("wordstats", {
+    total: 12,
+    baseFailing: 6,
+    cause: "tokenize() keeps case and splits on apostrophes, and the counter and the report both build on it.",
+    strategies: ["Lowercase tokens in tokenize()", "Keep apostrophes inside words with a regular expression", "Normalise in the counter instead of the tokenizer"],
+    ideas: { wrong: "Split on every non-letter character", partial: "Lowercase tokens but keep splitting contractions", fix: "Lowercase and keep contractions whole" },
+    failing: { wrong: 12, partial: 3 },
+  }),
+  demoRepo("booking", {
+    total: 10,
+    baseFailing: 2,
+    cause: "overlaps() uses <= so intervals that only touch count as overlapping, and Calendar.book() relies on it.",
+    strategies: ["Compare with < in overlaps()", "Treat intervals as half-open [start, end)", "Check conflicts in Calendar.book() only"],
+    ideas: { wrong: "Never report overlaps", partial: "Fix one side of the comparison", fix: "Use half-open intervals in overlaps()" },
+    failing: { wrong: 3, partial: 1 },
+  }),
 ];
 
 export function repoByName(name) {
@@ -252,13 +133,13 @@ export function repoByName(name) {
 }
 
 export function candidateFiles(repo, c) {
-  return patch(repo.files, c.edits);
+  return { ...repo.files, ...(c.override || {}) };
 }
 
 export function candidateDiff(repo, c) {
   const after = candidateFiles(repo, c);
   return Object.keys(after)
     .filter((p) => after[p] !== repo.files[p])
-    .map((p) => unifiedDiff(p, repo.files[p], after[p]))
+    .map((p) => unifiedDiff(p, repo.files[p] ?? "", after[p]))
     .join("");
 }

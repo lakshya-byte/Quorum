@@ -41,8 +41,8 @@ patchloop changes <run-id> "also handle page 0"   # one more commit on the same 
 ```
 
 No GitHub App configured, or no network? `patchloop connect github --demo` connects an offline
-demo account with three bundled repos (`demo/inventory-api`, `demo/billing-utils`,
-`demo/text-tools`); PRs and merges there are clearly labelled fake.
+demo account with three bundled repos (`demo/shop-api`, `demo/wordstats`,
+`demo/booking`); PRs and merges there are clearly labelled fake.
 
 `fix --repo` prints a live tree: repo scan, located files, the reproducer test (accepted only if it
 fails on the original code), each round's candidates with tests passed, the verdict and the PR

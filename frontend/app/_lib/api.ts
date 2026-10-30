@@ -31,6 +31,32 @@ export type RunNode = {
   diff?: string;
 };
 
+/** What the agent reports in the completion callback (see agent/app/runs.py safety_summary). */
+export type RunSafety = {
+  guard?: { input?: string; output?: string } | string;
+  policy?: { best_ok?: boolean; blocked?: number; candidates?: number; reasons?: string[] } | string;
+  security?: { best_ok?: boolean; blocked?: number; scanned?: boolean; scanner?: string } | string;
+};
+
+/** Collapse RunSafety into three words for the history table: pass | fail | n/a. */
+export function safetySummary(
+  s: RunSafety | null | undefined,
+): { guard: string; policy: string; security: string; allPass: boolean; anyFail: boolean } | null {
+  if (!s) return null;
+  // "n/a" means the check did not run (for example no output guard on an unsolved run); it is never shown as a pass.
+  let guard = "n/a";
+  if (typeof s.guard === "string") guard = s.guard;
+  else if (s.guard) {
+    const v = Object.values(s.guard);
+    guard = v.some((x) => x === "fail" || x === "block" || x === "blocked") ? "fail" : v.length > 0 && v.every((x) => x === "pass") ? "pass" : "n/a";
+  }
+  const best = (o: { best_ok?: boolean | null }) => (o.best_ok === false ? "fail" : o.best_ok === true ? "pass" : "n/a");
+  const policy = typeof s.policy === "string" ? s.policy : s.policy ? best(s.policy) : "n/a";
+  const security = typeof s.security === "string" ? s.security : s.security ? best(s.security) : "n/a";
+  const all = [guard, policy, security];
+  return { guard, policy, security, allPass: all.every((v) => v === "pass"), anyFail: all.some((v) => v === "fail") };
+}
+
 export type Run = {
   id: string;
   userId: string;
@@ -58,7 +84,12 @@ export type Run = {
   prBranch?: string | null;
   merged?: { by?: string; at?: string } | null;
   cost?: { tokens?: number; usd?: number | null } | null;
-  safety?: { policy?: string; security?: string; guard?: string } | null;
+  safety?: RunSafety | null;
+  /** true once the completion message went to Slack (set by the backend, shortly after the run finishes) */
+  slackSent?: boolean;
+  /** tests passed by the best candidate (present even where the list omits nodes) */
+  bestPassed?: number;
+  bestTotal?: number;
   traceId?: string | null;
   langsmithUrl?: string | null;
 };
@@ -240,7 +271,13 @@ export const prApi = {
 };
 
 export const notificationsApi = {
-  list: () => api<{ notifications: Notification[] | null; unread: number }>("/api/notifications"),
+  // The backend answers {notifications, unread}; a bare array (older mock) is accepted too.
+  list: async (): Promise<{ notifications: Notification[]; unread: number }> => {
+    const r = await api<{ notifications?: Notification[] | null; unread?: number } | Notification[] | null>("/api/notifications");
+    if (Array.isArray(r)) return { notifications: r, unread: r.filter((n) => !n.read).length };
+    const notifications = r?.notifications || [];
+    return { notifications, unread: r?.unread ?? notifications.filter((n) => !n.read).length };
+  },
   read: (id: string) => api<unknown>(`/api/notifications/${encodeURIComponent(id)}/read`, { method: "POST" }),
 };
 

@@ -5,4 +5,6 @@ __pycache__/
 .pytest_cache/
 runs/*.json
 .cache/
-evals/results/*.json
+evals/results/
+.deepeval/
+.streamlit/

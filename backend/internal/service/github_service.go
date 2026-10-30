@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"regexp"
@@ -25,11 +26,11 @@ var (
 	ErrBadState               = errors.New("invalid or expired state")
 )
 
-// DemoRepos are the bundled offline repos (the agent ships matching copies).
+// DemoRepos are the bundled offline repos (the agent ships matching copies in agent/app/demo_repos; keep the names in sync).
 var DemoRepos = []GitHubRepo{
-	{FullName: "demo/inventory-api", DefaultBranch: "main", Description: "Demo: stock levels and reservations (Python)", Language: "Python"},
-	{FullName: "demo/billing-utils", DefaultBranch: "main", Description: "Demo: invoice totals and rounding (Python)", Language: "Python"},
-	{FullName: "demo/text-tools", DefaultBranch: "main", Description: "Demo: slugify, wrap and truncate helpers (Python)", Language: "Python"},
+	{FullName: "demo/shop-api", DefaultBranch: "main", Description: "Demo: checkout library with carts, shipping and percentage coupons (Python)", Language: "Python"},
+	{FullName: "demo/wordstats", DefaultBranch: "main", Description: "Demo: word frequency helpers, tokenizer and report (Python)", Language: "Python"},
+	{FullName: "demo/booking", DefaultBranch: "main", Description: "Demo: room booking calendar with half-open hour intervals (Python)", Language: "Python"},
 }
 
 // IsDemoRepo reports whether full is one of the bundled demo repos.
@@ -153,7 +154,7 @@ func (s *GitHubService) HandleCallback(ctx context.Context, installationID int64
 		}
 		conn = &models.GitHubConnection{UserID: userID}
 	}
-	if installationID == 0 {
+	if installationID == 0 && conn.Mode == models.GitHubModeApp { // never reuse a demo account's fake id
 		installationID = conn.InstallationID
 	}
 	if installationID == 0 {
@@ -189,9 +190,19 @@ func (s *GitHubService) storeUserToken(conn *models.GitHubConnection, tok *UserT
 	return nil
 }
 
+// DemoInstallationID is the fake, stable installation id of a demo account (a
+// number in the range 9e9..1e10 that no real GitHub installation uses). It lets
+// signed GitHub webhooks (issues labeled "patchloop") be mapped to a demo user
+// in offline demos and e2e runs.
+func DemoInstallationID(userID string) int64 {
+	sum := sha256.Sum256([]byte("patchloop|demo-installation|" + userID))
+	n := int64(binary.BigEndian.Uint32(sum[:4]))
+	return 9_000_000_000 + n%900_000_000
+}
+
 func (s *GitHubService) ConnectDemo(ctx context.Context, userID string) error {
 	return s.store.Put(ctx, &models.GitHubConnection{UserID: userID, Mode: models.GitHubModeDemo, Login: "demo-user",
-		AvatarURL: "https://github.com/identicons/demo-user.png"})
+		InstallationID: DemoInstallationID(userID), AvatarURL: "https://github.com/identicons/demo-user.png"})
 }
 
 func (s *GitHubService) Disconnect(ctx context.Context, userID string) error {

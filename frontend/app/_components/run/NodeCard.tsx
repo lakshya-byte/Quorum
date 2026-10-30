@@ -159,7 +159,7 @@ function NodeCardImpl({ node, isBest, isSelected, lessons, onSelect }: Props) {
               className="flex items-start gap-1.5 rounded-lg px-2.5 py-1.5 bg-secondary/5 border border-secondary/20 text-[11.5px] leading-snug text-on-surface-variant"
             >
               <Icon name="sparkles" size={14} />
-              <span>
+              <span className="min-w-0 break-words [overflow-wrap:anywhere]">
                 <span className="text-secondary font-medium">Critic: </span>
                 {l}
               </span>

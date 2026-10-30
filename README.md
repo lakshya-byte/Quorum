@@ -22,28 +22,33 @@ browser / CLI ──> backend :8080 ──X-Agent-Secret──> agent :8001 (int
 
 ## Run everything
 
+Full setup guide (GitHub App, Slack app manifest, every env var, allowed hosts, how to test each trigger,
+a three-minute demo, troubleshooting): **[docs/SETUP.md](docs/SETUP.md)**.
+
 ### Local dev stack (no API keys needed)
 
-Requirements: Docker (for MongoDB), Go 1.27+ (or any Go with toolchain auto-download), Node 22,
-Python 3.12+ with the agent venv (`cd agent && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`),
-and `npm ci` in `frontend/`. Works on Linux and macOS.
+Everything runs offline in clearly labelled fake mode: fake model, local sandbox, a Demo GitHub account with
+three bundled repos (`demo/shop-api`, `demo/wordstats`, `demo/booking`), simulated pull requests and merges, and a
+fake Slack API. Requirements: Go 1.27+, Node 22, Python 3.12+, and Docker or any reachable MongoDB.
 
 ```bash
-scripts/dev-up.sh     # mongo (reuses :27017 or starts container pl-mongo), agent (fake mode), backend (DEV_MODE), frontend
-scripts/e2e.sh        # API + SSE + CLI end-to-end check, prints a PASS/FAIL table, exit 1 on any FAIL
-node scripts/e2e/ui.cjs [screenshot-dir]   # browser check with Playwright (needs `playwright` + Chromium installed)
-scripts/dev-down.sh   # stop agent/backend/frontend (add --mongo to stop the container too)
+scripts/dev-up.sh     # mongo (Docker, or your MONGO_URI), agent, fake Slack API, backend (DEV_MODE), frontend
+scripts/e2e.sh        # signup, GitHub demo, task, SSE, PR, merge gate, follow-up, webhooks, Slack, CLI; PASS/FAIL table
+node frontend/e2e/ui-real.cjs   # browser flow against the real stack (Playwright + Chromium installed separately)
+scripts/dev-down.sh   # stop agent/backend/Slack/frontend (add --mongo to stop the container too)
 ```
 
-- `dev-up.sh` generates fresh dev-only secrets (`AGENT_SHARED_SECRET`, JWT secrets) on every start
-  into `.logs/dev.env` (gitignored, mode 0600); logs go to `.logs/{agent,backend,frontend}.log`.
-- Options: `PATCHLOOP_MODE=hybrid|live` (needs Nebius keys in `agent/.env`), `FRONTEND_MODE=prod`
-  (`next build` + `next start` instead of `next dev`), `MONGO_DB_NAME`, `FAKE_DELAY_SCALE`.
-- With `DEV_MODE=true` the backend keeps OTP codes in memory and exposes
-  `GET /internal/dev/otp?email=` (needs `X-Agent-Secret`), so sign-up works without Resend.
-  Never set `DEV_MODE` in production.
-- Guest runs (`/try`) are limited to 3 per hour per IP in memory: `e2e.sh` uses all 3 and the
-  Playwright script uses 1, so restart the backend (`dev-down` + `dev-up`) between them.
+- `dev-up.sh` creates a Python venv in `.logs/venv` on first run (or `AGENT_VENV=...`), generates dev-only secrets
+  into `.logs/dev.env` (gitignored, mode 0600) and prints the URLs and how to sign in. Without Docker it prints
+  three fixes: start Docker Desktop, set `MONGO_URI` to Atlas, or `brew install mongodb-community`.
+- Options: `MONGO_URI`, `FRONTEND_MODE=prod` (production build, faster pages), `PATCHLOOP_MODE=hybrid|live`
+  (needs Nebius keys in `agent/.env`), `DEMO_CHECKS_PENDING_SEC`, `SLACK_FAKE=0`, `MONGO_DB_NAME`, `FAKE_DELAY_SCALE`.
+- With `DEV_MODE=true` the backend keeps OTP codes in memory and exposes `GET /internal/dev/otp?email=`
+  (needs `X-Agent-Secret`), so sign-up works without email. Never set `DEV_MODE` in production.
+- Guest runs (`/try`) are limited to 3 per hour per IP in memory: `e2e.sh` uses all 3, so restart the backend
+  (`dev-down` + `dev-up`) between runs.
+- GitHub and Slack integrations are real code paths written against the official docs and tested with mocks;
+  they need a GitHub App and a Slack app (see SETUP.md) and have not been exercised against the real services here.
 
 ### Docker Compose
 
@@ -66,8 +71,8 @@ the browser bundle, so rebuild the frontend image when the public backend URL ch
 | Service | Required | Optional (see each `.env.example`) |
 |---|---|---|
 | agent | `AGENT_SHARED_SECRET` (unset = every route but `/health` answers 401), `BACKEND_CALLBACK_URL` | `PATCHLOOP_MODE`, `PATCHLOOP_ENGINE`, `NEBIUS_API_KEY`, `NEBIUS_PROJECT_ID`, `MODEL_NANO/SUPER/ULTRA`, budgets `RUN_MAX_*`, `GUARD_*`, `NVIDIA_API_KEY`, `GITHUB_TOKEN`, `GITHUB_REPO`, `LANGSMITH_*`, `NEW_RELIC_*` |
-| backend | `AGENT_SHARED_SECRET` (same value), `AGENT_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `MONGO_URI`, `CLERK_SECRET_KEY`, `RESEND_API_KEY` (unless `DEV_MODE=true`) | `FRONTEND_ORIGIN` (CORS, credentials), `PUBLIC_APP_URL`, `COOKIE_SECURE`, `COOKIE_DOMAIN`, `SLACK_WEBHOOK_URL`, `NEW_RELIC_LICENSE_KEY`, `LIVE_RUNS_PER_USER_PER_DAY`, `GUEST_RUNS_PER_HOUR`, `TRUSTED_PROXIES` |
-| frontend | `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` (build time), `CLERK_SECRET_KEY` (runtime) | - |
+| backend | `AGENT_SHARED_SECRET` (same value), `AGENT_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `MONGO_URI`, `CLERK_SECRET_KEY`, `RESEND_API_KEY` (unless `DEV_MODE=true`) | GitHub App: `GITHUB_APP_ID/SLUG/PRIVATE_KEY`, `GITHUB_CLIENT_ID/SECRET`, `GITHUB_WEBHOOK_SECRET`, `PUBLIC_URL`, `FRONTEND_URL`, `TOKEN_ENC_KEY`; Slack app: `SLACK_SIGNING_SECRET`, `SLACK_BOT_TOKEN`; `DEMO_CHECKS_PENDING_SEC`; `FRONTEND_ORIGIN` (CORS, credentials), `PUBLIC_APP_URL`, `COOKIE_SECURE`, `COOKIE_DOMAIN`, `SLACK_WEBHOOK_URL`, `NEW_RELIC_LICENSE_KEY`, `LIVE_RUNS_PER_USER_PER_DAY`, `GUEST_RUNS_PER_HOUR`, `TRUSTED_PROXIES` |
+| frontend | `NEXT_PUBLIC_API_URL` (build time) | - |
 | CLI | - | `PATCHLOOP_API`, `PATCHLOOP_CONFIG`, `NO_COLOR` |
 
 ### Which keys unlock which live features

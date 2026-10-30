@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
-# Start the whole PatchLoop stack locally:
-#   MongoDB :27017 (docker, reused if already running) -> agent :8001 (fake mode, internal)
-#   -> backend :8080 (DEV_MODE=true) -> frontend :3000.
+# Start the whole PatchLoop stack locally, fully offline ("fake mode", no keys needed):
+#   MongoDB :27017 (docker pl-mongo, or your MONGO_URI) -> agent :8001 (fake, internal)
+#   -> fake Slack API :19090 (backend/cmd/slackdev) -> backend :8080 (DEV_MODE) -> frontend :3000.
 # Logs and PID files go to ./.logs (gitignored). Stop everything with scripts/dev-down.sh.
 #
 # Portable bash (Linux + macOS): no GNU-only flags, no `timeout`, no `sed -i`.
 #
 # Optional env:
+#   MONGO_URI=mongodb+srv://...      use this MongoDB (Atlas, local install): Docker is not touched
 #   PATCHLOOP_MODE=fake|hybrid|live  agent mode (overrides agent/.env; default: agent/.env, else fake; hybrid/live need NEBIUS_* keys in agent/.env)
-#   FRONTEND_MODE=dev|prod           next dev (default) or next build + next start
+#   FRONTEND_MODE=dev|prod           next dev (default) or next build + next start (faster pages)
+#   AGENT_VENV=/path/to/venv         reuse an existing Python venv (default: .logs/venv, created on demand)
 #   MONGO_DB_NAME=patchloop          backend database
 #   FAKE_DELAY_SCALE=1.0             agent fake-mode pacing (1.0 = demo speed)
+#   DEMO_CHECKS_PENDING_SEC=6        how long the fake CI of demo PRs stays "pending" (merge refused meanwhile)
+#   SLACK_FAKE=0                     do not start the fake Slack API / fake Slack env
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,7 +24,9 @@ mkdir -p "$LOGS/bin"
 AGENT_PORT=8001
 BACKEND_PORT=8080
 FRONTEND_PORT=3000
+SLACK_PORT=19090
 FRONTEND_MODE="${FRONTEND_MODE:-dev}"
+SLACK_FAKE="${SLACK_FAKE:-1}"
 
 say() { printf '[dev-up] %s\n' "$*"; }
 die() { printf '[dev-up] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -29,7 +35,7 @@ die() { printf '[dev-up] ERROR: %s\n' "$*" >&2; exit 1; }
 wait_http() {
   local url="$1" secs="$2" name="$3" log="$4" i=0 code
   while [ "$i" -lt "$secs" ]; do
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$url" || true)"
+    code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 2 "$url" || true)"
     if [ "$code" = "200" ]; then say "$name ready ($url)"; return 0; fi
     sleep 1; i=$((i + 1))
   done
@@ -38,7 +44,10 @@ wait_http() {
   die "$name did not answer 200 on $url within ${secs}s"
 }
 
-port_busy() { curl -s -o /dev/null --max-time 1 "http://localhost:$1/" ; }
+port_busy() { curl -s --noproxy '*' -o /dev/null --max-time 1 "http://localhost:$1/"; }
+
+need() { command -v "$1" >/dev/null 2>&1 || die "missing tool: $1"; }
+need curl; need go; need node; need npm; need python3
 
 for p in "$AGENT_PORT" "$BACKEND_PORT" "$FRONTEND_PORT"; do
   if port_busy "$p"; then
@@ -46,11 +55,9 @@ for p in "$AGENT_PORT" "$BACKEND_PORT" "$FRONTEND_PORT"; do
   fi
 done
 
-need() { command -v "$1" >/dev/null 2>&1 || die "missing tool: $1"; }
-need curl; need go; need node; need npm; need python3
-
 # ---------------------------------------------------------------- secrets (dev only, never committed)
 rand_hex() { python3 -c 'import secrets; print(secrets.token_hex(32))'; }
+rand_b64() { python3 -c 'import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())'; }
 DEV_ENV="$LOGS/dev.env"
 umask 077
 cat >"$DEV_ENV" <<EOF
@@ -58,6 +65,11 @@ cat >"$DEV_ENV" <<EOF
 AGENT_SHARED_SECRET=$(rand_hex)
 JWT_ACCESS_SECRET=$(rand_hex)
 JWT_REFRESH_SECRET=$(rand_hex)
+TOKEN_ENC_KEY=$(rand_b64)
+GITHUB_WEBHOOK_SECRET=$(rand_hex)
+SLACK_SIGNING_SECRET=$(rand_hex)
+SLACK_BOT_TOKEN=xoxb-dev-fake-token
+SLACK_API_BASE=http://localhost:$SLACK_PORT
 BACKEND_URL=http://localhost:$BACKEND_PORT
 FRONTEND_URL=http://localhost:$FRONTEND_PORT
 MONGO_DB_NAME=${MONGO_DB_NAME:-patchloop}
@@ -67,10 +79,25 @@ umask 022
 . "$DEV_ENV"
 
 # ---------------------------------------------------------------- MongoDB
-if (exec 3<>/dev/tcp/127.0.0.1/27017) 2>/dev/null; then
+mongo_up() { (exec 3<>/dev/tcp/127.0.0.1/27017) 2>/dev/null; }
+mongo_help() {
+  cat >&2 <<EOF
+
+[dev-up] MongoDB is needed and Docker is not available. Pick one fix:
+  1. Start Docker Desktop (or the docker daemon), then run scripts/dev-up.sh again.
+  2. Use a hosted database: export MONGO_URI='mongodb+srv://<user>:<pass>@<cluster>/' (Atlas free tier)
+     and run scripts/dev-up.sh again (Docker is then skipped).
+  3. Install MongoDB locally:  brew install mongodb-community  &&  brew services start mongodb-community
+EOF
+  exit 1
+}
+if [ -n "${MONGO_URI:-}" ]; then
+  say "MONGO_URI is set: using it, Docker is not touched"
+elif mongo_up; then
   say "MongoDB already listening on :27017, reusing it"
 else
-  need docker
+  command -v docker >/dev/null 2>&1 || { say "docker is not installed"; mongo_help; }
+  docker info >/dev/null 2>&1 || { say "docker is installed but its daemon is not running"; mongo_help; }
   if docker ps -a --format '{{.Names}}' | grep -qx pl-mongo; then
     say "starting existing container pl-mongo"
     docker start pl-mongo >/dev/null
@@ -79,19 +106,30 @@ else
     docker run -d --name pl-mongo -p 27017:27017 mongo:7 >/dev/null
   fi
   i=0
-  until (exec 3<>/dev/tcp/127.0.0.1/27017) 2>/dev/null; do
+  until mongo_up; do
     i=$((i + 1)); [ "$i" -gt 30 ] && die "MongoDB did not open :27017"
     sleep 1
   done
   say "MongoDB ready on :27017"
 fi
+export MONGO_URI="${MONGO_URI:-mongodb://localhost:27017}"
 
 # ---------------------------------------------------------------- agent (internal, :8001)
-VENV=""
-for v in "$ROOT/agent/.venv" "$ROOT/agent/venv"; do
-  if [ -x "$v/bin/python" ]; then VENV="$v"; break; fi
-done
-[ -n "$VENV" ] || die "no Python venv in agent/.venv or agent/venv (cd agent && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt)"
+VENV="${AGENT_VENV:-}"
+if [ -z "$VENV" ]; then
+  for v in "$LOGS/venv" "$ROOT/agent/.venv" "$ROOT/agent/venv"; do
+    if [ -x "$v/bin/python" ]; then VENV="$v"; break; fi
+  done
+fi
+if [ -z "$VENV" ]; then
+  VENV="$LOGS/venv"
+  say "creating Python venv in $VENV and installing agent/requirements.txt (first run only, a few minutes)"
+  python3 -m venv "$VENV" || die "python3 -m venv failed (install the python3-venv package)"
+  "$VENV/bin/pip" install --quiet --upgrade pip >"$LOGS/agent-install.log" 2>&1 || true
+  "$VENV/bin/pip" install --quiet -r "$ROOT/agent/requirements.txt" >>"$LOGS/agent-install.log" 2>&1 \
+    || { tail -n 30 "$LOGS/agent-install.log" >&2; die "pip install failed (see $LOGS/agent-install.log)"; }
+fi
+[ -x "$VENV/bin/python" ] || die "AGENT_VENV=$VENV has no bin/python"
 say "agent venv: $VENV"
 
 (
@@ -107,17 +145,29 @@ say "agent venv: $VENV"
 )
 wait_http "http://localhost:$AGENT_PORT/health" 90 agent "$LOGS/agent.log"
 
-# ---------------------------------------------------------------- backend (:8080)
+# ---------------------------------------------------------------- fake Slack API (:19090)
 say "building backend"
-(cd "$ROOT/backend" && go build -o "$LOGS/bin/patchloop-api" ./cmd/api) >"$LOGS/backend-build.log" 2>&1 \
-  || { tail -n 40 "$LOGS/backend-build.log" >&2; die "backend build failed"; }
+(cd "$ROOT/backend" && go build -o "$LOGS/bin/patchloop-api" ./cmd/api && go build -o "$LOGS/bin/slackdev" ./cmd/slackdev) \
+  >"$LOGS/backend-build.log" 2>&1 || { tail -n 40 "$LOGS/backend-build.log" >&2; die "backend build failed"; }
+if [ "$SLACK_FAKE" = "1" ]; then
+  nohup "$LOGS/bin/slackdev" serve -addr "127.0.0.1:$SLACK_PORT" -token "$SLACK_BOT_TOKEN" >"$LOGS/slack.log" 2>&1 &
+  echo $! >"$LOGS/slack.pid"
+  wait_http "http://localhost:$SLACK_PORT/_messages" 15 "fake slack" "$LOGS/slack.log"
+fi
+
+# ---------------------------------------------------------------- backend (:8080)
 (
   cd "$ROOT/backend"
   export PORT="$BACKEND_PORT" DEV_MODE=true
   export AGENT_URL="http://localhost:$AGENT_PORT" AGENT_SHARED_SECRET
-  export JWT_ACCESS_SECRET JWT_REFRESH_SECRET MONGO_DB_NAME
-  export MONGO_URI="${MONGO_URI:-mongodb://localhost:27017}"
-  export FRONTEND_ORIGIN="http://localhost:$FRONTEND_PORT"
+  export JWT_ACCESS_SECRET JWT_REFRESH_SECRET MONGO_DB_NAME MONGO_URI TOKEN_ENC_KEY GITHUB_WEBHOOK_SECRET
+  export FRONTEND_ORIGIN="http://localhost:$FRONTEND_PORT" FRONTEND_URL="http://localhost:$FRONTEND_PORT"
+  export DEMO_CHECKS_PENDING_SEC="${DEMO_CHECKS_PENDING_SEC:-6}"
+  export PUBLIC_URL="http://localhost:$BACKEND_PORT" PUBLIC_APP_URL="http://localhost:$FRONTEND_PORT"
+  # GitHub App credentials are deliberately NOT set: only the offline demo account works.
+  if [ "$SLACK_FAKE" = "1" ]; then
+    export SLACK_SIGNING_SECRET SLACK_BOT_TOKEN SLACK_API_BASE
+  fi
   nohup "$LOGS/bin/patchloop-api" >"$LOGS/backend.log" 2>&1 &
   echo $! >"$LOGS/backend.pid"
 )
@@ -143,11 +193,18 @@ wait_http "http://localhost:$FRONTEND_PORT/" 180 frontend "$LOGS/frontend.log"
 
 cat <<EOF
 
-PatchLoop is up (agent mode: ${PATCHLOOP_MODE:-from agent/.env}, frontend: $FRONTEND_MODE)
+PatchLoop is up (agent mode: ${PATCHLOOP_MODE:-from agent/.env}, frontend: $FRONTEND_MODE, GitHub: offline demo account)
   frontend  http://localhost:$FRONTEND_PORT   (try /try as a guest)
   backend   http://localhost:$BACKEND_PORT    (DEV_MODE=true: OTPs at /internal/dev/otp)
   agent     http://localhost:$AGENT_PORT      (internal; X-Agent-Secret)
-  logs      $LOGS/{agent,backend,frontend}.log
+  slack     http://localhost:$SLACK_PORT      (fake Slack API; GET /_messages shows what Slack would show)
+  logs      $LOGS/{agent,backend,frontend,slack}.log
   secrets   $DEV_ENV (dev only, regenerated each start)
-Run the end-to-end check: scripts/e2e.sh   Stop: scripts/dev-down.sh
+
+Sign in without email (DEV_MODE):
+  1. open http://localhost:$FRONTEND_PORT/signup, enter any email + password, submit
+  2. fetch the one-time code:
+       . $DEV_ENV; curl -s -H "X-Agent-Secret: \$AGENT_SHARED_SECRET" "http://localhost:$BACKEND_PORT/internal/dev/otp?email=YOU@example.com"
+  3. type the 6-digit code, then Integrations -> "Use demo account" and /new
+Run the end-to-end check: scripts/e2e.sh     Stop: scripts/dev-down.sh
 EOF

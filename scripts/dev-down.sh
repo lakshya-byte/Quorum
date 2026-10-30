@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop what scripts/dev-up.sh started (frontend, backend, agent). MongoDB is left running
+# Stop what scripts/dev-up.sh started (frontend, backend, fake Slack, agent). MongoDB is left running
 # (pass --mongo to also stop the pl-mongo container). Portable bash (Linux + macOS).
 # Only processes started by dev-up.sh (PID files in .logs) and their children are signalled.
 set -uo pipefail
@@ -16,7 +16,7 @@ tree() {
 }
 
 ALL=""
-for svc in frontend backend agent; do
+for svc in frontend backend slack agent; do
   f="$LOGS/$svc.pid"
   if [ -f "$f" ]; then
     pid="$(cat "$f")"
@@ -38,7 +38,7 @@ left="$(alive)"
 if [ -n "$left" ]; then say "still running after 10s, killing:$left"; kill -9 $left 2>/dev/null || true; sleep 0.5; fi
 
 if command -v lsof >/dev/null 2>&1; then
-  for p in 3000 8080 8001; do
+  for p in 3000 8080 8001 19090; do
     holder="$(lsof -ti "tcp:$p" -sTCP:LISTEN 2>/dev/null | tr '\n' ' ')"
     [ -n "$holder" ] && say "note: port $p is held by pid(s) $holder, not started by dev-up.sh (left alone)"
   done

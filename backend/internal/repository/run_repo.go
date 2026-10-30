@@ -119,6 +119,12 @@ func (r *RunRepository) SetMerged(ctx context.Context, id string, by string, at 
 	return r.set(ctx, id, bson.M{"merged": models.Merged{By: by, At: at}})
 }
 
+func (r *RunRepository) SetMergedForPR(ctx context.Context, userID, repo, branch string, number int, by string, at time.Time) error {
+	_, err := r.col.UpdateMany(ctx, bson.M{"user_id": userID, "repo": repo, "pr_number": number, "pr_branch": branch},
+		bson.M{"$set": bson.M{"merged": models.Merged{By: by, At: at}}})
+	return err
+}
+
 func (r *RunRepository) SetSlackSent(ctx context.Context, id string) error {
 	return r.set(ctx, id, bson.M{"slack_sent": true})
 }
@@ -171,7 +177,9 @@ type RunCompletion struct {
 	PRURL        string
 	PRNumber     int
 	PRBranch     string
-	FilesChanged any
+	FilesChanged int
+	BestPassed   int
+	BestTotal    int
 	Safety       map[string]any
 	Cost         *models.Cost
 	LangsmithURL string
@@ -205,8 +213,11 @@ func (r *RunRepository) Complete(ctx context.Context, agentRunID string, c RunCo
 	if c.PRBranch != "" {
 		set["pr_branch"] = c.PRBranch
 	}
-	if c.FilesChanged != nil {
+	if c.FilesChanged > 0 {
 		set["files_changed"] = c.FilesChanged
+	}
+	if c.BestTotal > 0 {
+		set["best_passed"], set["best_total"] = c.BestPassed, c.BestTotal
 	}
 	if c.Safety != nil {
 		set["safety"] = c.Safety
@@ -255,8 +266,11 @@ func ApplyCompletion(prev models.Run, c RunCompletion, now time.Time) *models.Ru
 	if c.PRBranch != "" {
 		cur.PRBranch = c.PRBranch
 	}
-	if c.FilesChanged != nil {
+	if c.FilesChanged > 0 {
 		cur.FilesChanged = c.FilesChanged
+	}
+	if c.BestTotal > 0 {
+		cur.BestPassed, cur.BestTotal = c.BestPassed, c.BestTotal
 	}
 	if c.Safety != nil {
 		cur.Safety = c.Safety
