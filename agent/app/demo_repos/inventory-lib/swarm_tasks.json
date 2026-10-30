@@ -1,0 +1,65 @@
+{
+  "repo": "inventory-lib",
+  "description": "Stock / pricing / orders library (python, unittest suite green). Used for the feature and refactor swarm demos.",
+  "language_hint": "python",
+  "tasks": [
+    {
+      "id": "feature-bulk-discounts",
+      "task_type": "feature",
+      "title": "Add bulk discount tiers",
+      "prompt": "Add bulk discount tiers to pricing: buying 10 or more units of an item takes 5% off the line price, 50 or more takes 10% off, 100 or more takes 15% off. price_for() must apply the tier, and add a public discount_percent(qty) helper that returns the percent for a quantity.",
+      "criteria": [
+        {"id": "build", "kind": "build", "hard": true, "description": "all sources compile"},
+        {"id": "no_regression", "kind": "no_regression", "hard": true, "description": "every test that passed originally still passes"},
+        {"id": "policy", "kind": "policy", "hard": true, "description": "existing tests untouched, no protected paths", "params": {"task_type": "feature"}},
+        {"id": "security", "kind": "security", "hard": true, "description": "no new medium/high findings"},
+        {"id": "secrets", "kind": "secrets", "hard": true, "description": "no secret-looking strings added"},
+        {"id": "acceptance", "kind": "acceptance_tests", "hard": true, "description": "acceptance tests written from the task text fail on the original and pass now",
+         "params": {"files_from": {"tests/test_bulk_discounts.py": "acceptance/test_bulk_discounts.py"}}},
+        {"id": "lint", "kind": "lint_typecheck", "hard": true, "description": "lint is no worse than the baseline"}
+      ],
+      "reference": {"dir": "reference/feature-bulk-discounts", "delete": [],
+                    "units": [
+                      {"id": "u1-pricing", "title": "Tiered pricing + discount_percent", "files": ["inventory/pricing.py"]},
+                      {"id": "u2-export", "title": "Export discount_percent from the package", "files": ["inventory/__init__.py"]}
+                    ]},
+      "bad": {
+        "tests-deleted": {"dir": "bad/feature-tests-deleted", "delete": ["tests/test_pricing.py"],
+                          "note": "correct feature, but silently deletes an existing test file"}
+      }
+    },
+    {
+      "id": "refactor-split-stock",
+      "task_type": "refactor",
+      "title": "Split the monolithic stock.py",
+      "prompt": "Split the monolithic inventory/stock.py into focused modules (bookkeeping, reservations, queries, csv) and keep the public API exactly as it is: every name importable from inventory and inventory.stock must keep working with the same signatures. No file in inventory/ should be longer than 110 lines afterwards.",
+      "criteria": [
+        {"id": "build", "kind": "build", "hard": true, "description": "all sources compile"},
+        {"id": "no_regression", "kind": "no_regression", "hard": true, "description": "every test that passed originally still passes"},
+        {"id": "policy", "kind": "policy", "hard": true, "description": "existing tests untouched, no protected paths", "params": {"task_type": "refactor"}},
+        {"id": "security", "kind": "security", "hard": true, "description": "no new medium/high findings"},
+        {"id": "secrets", "kind": "secrets", "hard": true, "description": "no secret-looking strings added"},
+        {"id": "characterization", "kind": "characterization", "hard": true, "description": "golden-behaviour tests captured from the original pass before and after",
+         "params": {"files_from": {"tests/test_characterization_stock.py": "acceptance/test_characterization_stock.py"}}},
+        {"id": "api_surface", "kind": "api_surface", "hard": true, "description": "exported symbols and signatures of inventory and inventory.stock are unchanged",
+         "params": {"modules": ["inventory/__init__.py", "inventory/stock.py"]}},
+        {"id": "lint", "kind": "lint_typecheck", "hard": true, "description": "lint is no worse than the baseline"},
+        {"id": "size", "kind": "complexity_metric", "hard": true, "description": "largest module in inventory/ is at most 110 lines (was 172)",
+         "params": {"metric": "max_file_lines", "paths": ["inventory/*.py"], "target": {"op": "<=", "value": 110}}},
+        {"id": "readability", "kind": "advisory_rubric", "hard": false, "description": "modules have one clear responsibility each (advisory)"}
+      ],
+      "reference": {"dir": "reference/refactor-split-stock", "delete": [],
+                    "units": [
+                      {"id": "u1-base", "title": "Extract bookkeeping + audit into stock_base.py", "files": ["inventory/stock_base.py"]},
+                      {"id": "u2-mixins", "title": "Extract reservations, queries and csv", "files": ["inventory/reservations.py", "inventory/queries.py", "inventory/csv_io.py"]},
+                      {"id": "u3-facade", "title": "Turn stock.py into a thin facade", "files": ["inventory/stock.py"], "depends_on": ["u1-base", "u2-mixins"]}
+                    ]},
+      "bad": {
+        "api-broken": {"dir": "bad/refactor-api-broken", "delete": [],
+                       "note": "same split, but Stock.reserved() was renamed reserved_qty() (no existing test calls it)"},
+        "tests-deleted": {"dir": "reference/refactor-split-stock", "delete": ["tests/test_stock.py"],
+                          "note": "valid split that deletes tests/test_stock.py"}
+      }
+    }
+  ]
+}
