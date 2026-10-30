@@ -87,6 +87,14 @@ class Settings:
     allow_local_repo_exec: bool = False
     price_in_per_mtok: float = 0.0
     price_out_per_mtok: float = 0.0
+    # Agent swarm (app/swarm): env CAPS. Requests from the user or the planner are clamped to these, never above.
+    swarm_max_workers: int = 8
+    swarm_max_tokens: int = 400000
+    swarm_max_wall_s: float = 900.0
+    swarm_worker_max_steps: int = 30
+    swarm_max_rounds: int = 3
+    swarm_max_units: int = 12
+    swarm_tool_mode: str = "auto"  # auto | native | json (worker tool calling)
 
     @property
     def llm_ready(self) -> bool:
@@ -143,4 +151,12 @@ def load_settings() -> Settings:
         allow_local_repo_exec=_env("ALLOW_LOCAL_REPO_EXEC").lower() in ("1", "true", "yes"),
         price_in_per_mtok=_float("PRICE_IN_PER_MTOK", 0.0),
         price_out_per_mtok=_float("PRICE_OUT_PER_MTOK", 0.0),
+        swarm_max_workers=max(1, _int("SWARM_MAX_WORKERS", 8)),
+        swarm_max_tokens=max(1000, _int("SWARM_MAX_TOKENS", 400000)),
+        swarm_max_wall_s=max(5.0, _float("SWARM_MAX_WALL_S", 900.0)),
+        swarm_worker_max_steps=max(1, _int("SWARM_WORKER_MAX_STEPS", 30)),
+        swarm_max_rounds=max(1, _int("SWARM_MAX_ROUNDS", 3)),
+        swarm_max_units=max(1, _int("SWARM_MAX_UNITS", 12)),
+        swarm_tool_mode=_env("SWARM_TOOL_MODE", "auto").lower() if _env("SWARM_TOOL_MODE", "auto").lower()
+        in ("auto", "native", "json") else "auto",
     )
