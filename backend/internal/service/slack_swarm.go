@@ -29,6 +29,7 @@ type roundView struct {
 	n       int
 	ts      string
 	units   map[string]string
+	winner  map[string]int
 	order   []string
 	spawned int
 	running map[string]bool
@@ -104,7 +105,7 @@ func (a *SlackApp) watch(run *models.Run) {
 			return
 		}
 		rounds++
-		cur = &roundView{n: rounds, units: map[string]string{}, running: map[string]bool{}}
+		cur = &roundView{n: rounds, units: map[string]string{}, winner: map[string]int{}, running: map[string]bool{}}
 		ts, err := a.api.PostMessage(ctx, ref.Channel, ref.ThreadTS, fmt.Sprintf("*Round %d*\nstarting workers…", rounds), nil)
 		if err == nil {
 			cur.ts = ts
@@ -154,9 +155,12 @@ func (a *SlackApp) watch(run *models.Run) {
 				if _, ok := cur.units[id]; !ok {
 					cur.order = append(cur.order, id)
 				}
+				if w, ok := toInt(d["winner_variant"]); ok {
+					cur.winner[id] = w
+				}
 				label := status
-				if w, ok := toInt(d["winner_variant"]); ok && status == "passed" {
-					label = fmt.Sprintf("passed (variant %d won)", w)
+				if w, ok := cur.winner[id]; ok && (status == "passed" || status == "merged") {
+					label = fmt.Sprintf("%s (variant %d won)", status, w)
 				}
 				cur.units[id] = label
 			}
