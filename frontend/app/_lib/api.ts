@@ -3,9 +3,41 @@
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080").replace(/\/$/, "");
 
+/** Build-time switch for the offline mock backend (frontend/mocks/server.mjs): no Clerk, a bearer token kept in localStorage. Off by default. */
+export const MOCK_AUTH = process.env.NEXT_PUBLIC_MOCK_AUTH === "1";
+export const MOCK_TOKEN_KEY = "patchloop:mock-token";
+
 export type User = { id: string; email: string; companyName: string; emailVerified: boolean };
 export type Bug = { id: string; title: string; issue: string; tier: string };
 export type Engine = "graph" | "loop";
+
+// ----- v3: task types, plans, outcomes (see docs/CONTRACT-V3-SWARM.md) -----
+export type TaskType = "auto" | "bugfix" | "feature" | "refactor" | "ui" | "tests" | "perf" | "deps" | "docs" | "migration" | "other";
+export type Outcome = "complete" | "partial" | "failed" | "needs_input" | "blocked";
+export type CriterionStatus = "pass" | "fail" | "skip" | "advisory";
+export type PlanCriterion = { id: string; kind: string; hard: boolean; description: string; verifier?: string };
+export type PlanUnit = { id: string; title: string; scope_files: string[]; depends_on: string[]; variants: number; role?: string };
+export type Plan = {
+  task_type: string;
+  task_type_source?: "auto" | "user";
+  summary?: string;
+  criteria: PlanCriterion[];
+  units: PlanUnit[];
+  swarm?: { max_parallel?: number; workers_planned?: number; limits?: { max_workers?: number; max_tokens?: number; max_wall_s?: number } };
+};
+export type VerifyResultRow = { criterion_id: string; kind: string; hard: boolean; status: CriterionStatus; score?: number | null; detail?: string; artifacts?: string[] };
+export type CriteriaSummary = {
+  hard_pass?: number | boolean;
+  hard_total?: number;
+  hardPass?: number | boolean;
+  hardTotal?: number;
+  advisory?: unknown[];
+  unverified?: string[];
+  results?: VerifyResultRow[];
+};
+export type ArtifactMeta = { id: string; kind: "screenshot" | "log" | "report" | "diff" | string; label: string; phase: "before" | "after" | "n/a" | string; viewport?: number | string | null; mime: string; size?: number };
+export type TaskLimits = { max_workers?: number; max_tokens?: number; max_wall_s?: number };
+export type TaskOptions = { taskType?: TaskType; strict?: string[]; limits?: TaskLimits };
 
 export type Usage = { prompt_tokens?: number; completion_tokens?: number; calls?: number };
 
@@ -92,6 +124,14 @@ export type Run = {
   bestTotal?: number;
   traceId?: string | null;
   langsmithUrl?: string | null;
+  /** v3 swarm fields (camelCase JSON; all optional so older runs still load) */
+  taskType?: string | null;
+  outcome?: Outcome | null;
+  plan?: Plan | null;
+  criteriaSummary?: CriteriaSummary | null;
+  agentsSpawned?: number | null;
+  peakParallel?: number | null;
+  artifacts?: ArtifactMeta[] | null;
 };
 
 export type GithubStatus = {
@@ -143,6 +183,13 @@ export class ApiError extends Error {
 /** Clerk session token for the API (null when signed out or Clerk has not loaded). */
 export async function getAuthToken(): Promise<string | null> {
   if (typeof window === "undefined") return null;
+  if (MOCK_AUTH) {
+    try {
+      return window.localStorage.getItem(MOCK_TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  }
   try {
     return (await (window as unknown as { Clerk?: { session?: { getToken: () => Promise<string | null> } } }).Clerk?.session?.getToken()) ?? null;
   } catch {
@@ -258,8 +305,54 @@ export const slackApi = {
 };
 
 export const tasksApi = {
-  create: (repo: string, branch: string, task: string, autoPr = true) =>
-    api<{ runId: string }>("/api/tasks", { method: "POST", json: { repo, branch, task, autoPr } }),
+  create: (repo: string, branch: string, task: string, autoPr = true, opts: TaskOptions = {}) =>
+    api<{ runId: string }>("/api/tasks", {
+      method: "POST",
+      json: {
+        repo,
+        branch,
+        task,
+        autoPr,
+        ...(opts.taskType && opts.taskType !== "auto" ? { taskType: opts.taskType } : {}),
+        ...(opts.strict?.length ? { strict: opts.strict } : {}),
+        ...(opts.limits && Object.keys(opts.limits).length ? { limits: opts.limits } : {}),
+      },
+    }),
+};
+
+/** Artifacts are behind auth, so images cannot use a bare <img src>: fetch with the token and hand out blob URLs. */
+const artifactCache = new Map<string, Promise<{ url: string; mime: string; text?: string }>>();
+export function fetchArtifact(runId: string, artifactId: string, asText = false): Promise<{ url: string; mime: string; text?: string }> {
+  const key = `${runId}/${artifactId}/${asText ? "t" : "b"}`;
+  const hit = artifactCache.get(key);
+  if (hit) return hit;
+  const p = (async () => {
+    const token = await getAuthToken();
+    let res: Response;
+    try {
+      res = await fetch(`${API_URL}/api/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(artifactId)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+    } catch {
+      throw new ApiError(0, "Cannot reach the PatchLoop API.");
+    }
+    if (!res.ok) throw new ApiError(res.status, `Could not load artifact (${res.status})`);
+    const mime = (res.headers.get("content-type") || "").split(";")[0];
+    if (asText) return { url: "", mime, text: await res.text() };
+    return { url: URL.createObjectURL(await res.blob()), mime };
+  })();
+  artifactCache.set(key, p);
+  p.catch(() => artifactCache.delete(key));
+  return p;
+}
+
+export const artifactsApi = {
+  list: (runId: string) => api<ArtifactMeta[] | null>(`/api/runs/${encodeURIComponent(runId)}/artifacts`),
+};
+
+export const answersApi = {
+  send: (runId: string, answers: Record<string, string>) =>
+    api<{ runId?: string }>(`/api/runs/${encodeURIComponent(runId)}/answers`, { method: "POST", json: { answers } }),
 };
 
 export const prApi = {

@@ -53,9 +53,11 @@ function RunInner({ id }: { id: string }) {
   }, [id]);
 
   const finished = run ? isFinishedRun(run) : false;
-  const [state, dispatch, retry] = useRunStream(run && !finished ? runsApi.eventsUrl(id) : null, {
+  // A finished needs_input run replays its stream once so the planner's questions can be shown again.
+  const replay = !!run && finished && run.outcome === "needs_input";
+  const [state, dispatch, retry] = useRunStream(run && (!finished || replay) ? runsApi.eventsUrl(id) : null, {
     withCredentials: true,
-    snapshot: run && finished ? run : null,
+    snapshot: run && finished && !replay ? run : null,
   });
   // The backend marks run.slackSent a moment after the run finished: look again, without touching the live view.
   const streamDone = state.status === "finished";

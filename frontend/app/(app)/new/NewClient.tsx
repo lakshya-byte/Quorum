@@ -3,17 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { errorMessage, githubApi, tasksApi, type BranchInfo, type GithubStatus, type RepoSummary } from "../../_lib/api";
+import { errorMessage, githubApi, tasksApi, type BranchInfo, type GithubStatus, type RepoSummary, type TaskLimits, type TaskType } from "../../_lib/api";
+import { TASK_TYPES, TYPE_BY_ID } from "./taskTypes";
 import { RequireAuth } from "../../_lib/auth";
 import { Badge, Button, Card, EmptyState, ErrorNote, Field, Icon, Input, LinkButton, PageHeader, Skeleton, Stepper, Textarea, cx } from "../../_ui";
 
-const STEPS = ["Repository", "Describe the problem", "Review and start"];
-
-const EXAMPLES = [
-  "Checkout totals are wrong when a percentage coupon is used: the discount also reduces shipping and rounds down.",
-  "Word counts are wrong: 'The' and 'the' are counted separately and contractions like don't are split in two.",
-  "Back-to-back bookings are rejected as conflicts: booking 10-11 right after 9-10 raises ConflictError.",
-];
+const STEPS = ["Repository", "Describe the task", "Review and start"];
 
 function ago(iso: string) {
   const d = Math.max(0, Date.now() - new Date(iso).getTime());
@@ -34,6 +29,11 @@ function NewInner() {
   const [branch, setBranch] = useState("");
   const [task, setTask] = useState("");
   const [autoPr, setAutoPr] = useState(true);
+  const [taskType, setTaskType] = useState<TaskType>("auto");
+  const [strict, setStrict] = useState("");
+  const [maxWorkers, setMaxWorkers] = useState("");
+  const [maxTokens, setMaxTokens] = useState("");
+  const [maxWall, setMaxWall] = useState("");
   const [busy, setBusy] = useState(false);
   const [startErr, setStartErr] = useState<string | null>(null);
 
@@ -87,7 +87,13 @@ function NewInner() {
     setBusy(true);
     setStartErr(null);
     try {
-      const { runId } = await tasksApi.create(repo.fullName, branch, task.trim(), autoPr);
+      const limits: TaskLimits = {};
+      const num = (v: string) => (v.trim() && Number.isFinite(Number(v)) && Number(v) > 0 ? Math.floor(Number(v)) : undefined);
+      if (num(maxWorkers)) limits.max_workers = Math.min(8, num(maxWorkers)!);
+      if (num(maxTokens)) limits.max_tokens = num(maxTokens);
+      if (num(maxWall)) limits.max_wall_s = num(maxWall);
+      const ids = strict.split(/[\s,]+/).filter(Boolean);
+      const { runId } = await tasksApi.create(repo.fullName, branch, task.trim(), autoPr, { taskType, strict: ids, limits });
       router.push(`/runs/${runId}`);
     } catch (e) {
       setStartErr(errorMessage(e));
@@ -96,11 +102,12 @@ function NewInner() {
   };
 
   const taskOk = task.trim().length >= 8;
-  const taskHint = useMemo(() => (task.length > 3800 ? `${4000 - task.length} characters left` : "Plain English is fine. Paste an error message or stack trace if you have one."), [task]);
+  const info = TYPE_BY_ID[taskType];
+  const taskHint = useMemo(() => (task.length > 3800 ? `${4000 - task.length} characters left` : "Plain English is fine. Say what you want, not how. Paste an error message or stack trace if you have one."), [task]);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
-      <PageHeader title="Fix a bug" description="Pick a repository, describe what is wrong, and an agent team will try to fix it. You review the pull request." />
+      <PageHeader title="New task" description="Describe a bug, a feature, a refactor or a UI change. PatchLoop spawns a swarm sized to the task, runs it in sandboxes, and opens a pull request only when its own checks pass. You merge." />
       <Stepper steps={STEPS} current={step} onSelect={setStep} />
 
       {ghErr && <ErrorNote>{ghErr}</ErrorNote>}
@@ -216,24 +223,44 @@ function NewInner() {
       )}
 
       {step === 1 && (
-        <Card className="flex flex-col gap-4 p-5" data-testid="step-task">
-          <Field label="What is wrong?" hint={taskHint}>
+        <Card className="flex flex-col gap-5 p-5" data-testid="step-task">
+          <fieldset>
+            <legend className="mb-2 text-[13px] font-medium text-on-surface">What kind of task is it?</legend>
+            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Task type" data-testid="type-chips">
+              {TASK_TYPES.map((t) => {
+                const on = t.id === taskType;
+                return (
+                  <label
+                    key={t.id}
+                    className={cx(
+                      "relative inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary",
+                      on ? "border-primary/60 bg-primary/10 text-white" : "border-border-strong text-on-surface-variant hover:text-white"
+                    )}
+                  >
+                    <input type="radio" name="task-type" value={t.id} checked={on} onChange={() => setTaskType(t.id)} className="sr-only" data-testid={`type-${t.id}`} />
+                    <Icon name={t.icon} size={14} className={on ? "text-primary" : ""} />
+                    {t.label}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="mt-3 flex items-start gap-2 rounded-lg border border-border bg-surface-container-low px-3 py-2.5 text-[13px] leading-5 text-on-surface-variant" data-testid="type-how" aria-live="polite">
+              <Icon name="shield-check" size={16} className="mt-0.5 text-primary" />
+              <span>
+                <span className="font-medium text-white">How it is verified: </span>
+                {info.how}
+              </span>
+            </p>
+          </fieldset>
+          <Field label="What should change?" hint={taskHint}>
             {(p) => (
-              <Textarea
-                {...p}
-                value={task}
-                onChange={(e) => setTask(e.target.value)}
-                maxLength={4000}
-                placeholder="e.g. Pagination returns the wrong last page when the item count is an exact multiple of the page size."
-                className="min-h-[150px]"
-                data-testid="task-input"
-              />
+              <Textarea {...p} value={task} onChange={(e) => setTask(e.target.value)} maxLength={4000} placeholder={info.placeholder} className="min-h-[150px]" data-testid="task-input" />
             )}
           </Field>
           <div>
-            <p className="mb-2 text-[12.5px] font-medium text-on-surface-variant">Examples for the demo repositories</p>
-            <div className="flex flex-col gap-2">
-              {EXAMPLES.map((ex) => (
+            <p className="mb-2 text-[12.5px] font-medium text-on-surface-variant">Examples, click to use one</p>
+            <div className="flex flex-col gap-2" data-testid="examples">
+              {info.examples.map((ex) => (
                 <button
                   key={ex}
                   type="button"
@@ -245,6 +272,26 @@ function NewInner() {
               ))}
             </div>
           </div>
+          <details className="group rounded-lg border border-border bg-surface-container-low" data-testid="advanced">
+            <summary className="focus-ring flex cursor-pointer list-none items-center justify-between gap-2 rounded-lg px-3.5 py-2.5 text-[13px] font-medium text-white">
+              Advanced: strict criteria and limits
+              <Icon name="chevron-down" size={15} className="text-on-surface-variant transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="grid gap-4 border-t border-border p-4 sm:grid-cols-2">
+              <Field label="Make these advisory checks hard" hint="Criterion ids from the plan, comma separated, for example ui_vision. A promoted check can then block the pull request." className="sm:col-span-2">
+                {(p) => <Input {...p} value={strict} onChange={(e) => setStrict(e.target.value)} placeholder="ui_vision, readability" autoComplete="off" data-testid="strict-input" />}
+              </Field>
+              <Field label="Max parallel workers" hint="1 to 8. The server enforces its own cap.">
+                {(p) => <Input {...p} type="number" min={1} max={8} inputMode="numeric" value={maxWorkers} onChange={(e) => setMaxWorkers(e.target.value)} placeholder="default" data-testid="limit-workers" />}
+              </Field>
+              <Field label="Max tokens" hint="Run stops at this budget.">
+                {(p) => <Input {...p} type="number" min={10000} inputMode="numeric" value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)} placeholder="default" />}
+              </Field>
+              <Field label="Max wall time (seconds)" hint="Run stops at this limit.">
+                {(p) => <Input {...p} type="number" min={30} inputMode="numeric" value={maxWall} onChange={(e) => setMaxWall(e.target.value)} placeholder="default" />}
+              </Field>
+            </div>
+          </details>
         </Card>
       )}
 
@@ -255,19 +302,24 @@ function NewInner() {
             <dd className="font-mono text-[13.5px] text-white">{repo.fullName}</dd>
             <dt className="text-[13px] text-on-surface-variant">Branch</dt>
             <dd className="font-mono text-[13.5px] text-white">{branch}</dd>
-            <dt className="text-[13px] text-on-surface-variant">Problem</dt>
+            <dt className="text-[13px] text-on-surface-variant">Task type</dt>
+            <dd className="text-[14px] text-white">
+              {info.label}
+              <span className="mt-1 block text-[12.5px] leading-5 text-on-surface-variant">{info.how}</span>
+            </dd>
+            <dt className="text-[13px] text-on-surface-variant">Task</dt>
             <dd className="whitespace-pre-wrap text-[14px] leading-6 text-on-surface">{task}</dd>
           </dl>
           <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-surface-container-low p-3.5">
             <input type="checkbox" checked={autoPr} onChange={(e) => setAutoPr(e.target.checked)} className="mt-1 h-4 w-4 accent-[#10b981]" />
             <span>
-              <span className="block text-[14px] font-medium text-white">Open a pull request when the tests pass</span>
+              <span className="block text-[14px] font-medium text-white">Open a pull request when the checks pass</span>
               <span className="block text-[13px] text-on-surface-variant">The branch is named patchloop/…, and nothing is merged until you press Merge.</span>
             </span>
           </label>
           <ul className="grid gap-2 text-[13px] text-on-surface-variant sm:grid-cols-3">
-            <li className="flex items-center gap-2"><Icon name="box" size={15} className="text-primary" />Candidates run in sandboxes</li>
-            <li className="flex items-center gap-2"><Icon name="flask" size={15} className="text-primary" />Your tests decide</li>
+            <li className="flex items-center gap-2"><Icon name="box" size={15} className="text-primary" />Everything runs in sandboxes</li>
+            <li className="flex items-center gap-2"><Icon name="flask" size={15} className="text-primary" />Its own checks decide</li>
             <li className="flex items-center gap-2"><Icon name="lock" size={15} className="text-primary" />Never pushes to {branch}</li>
           </ul>
           {startErr && (
@@ -293,7 +345,7 @@ function NewInner() {
           </Button>
         ) : (
           <Button icon="play" onClick={start} loading={busy} data-testid="start-task">
-            {busy ? "Starting…" : "Start fixing"}
+            {busy ? "Starting…" : "Start task"}
           </Button>
         )}
       </div>

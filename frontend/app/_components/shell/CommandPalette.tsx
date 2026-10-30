@@ -9,7 +9,7 @@ type Item = { id: string; label: string; hint?: string; icon: IconName; href: st
 
 const PAGES: Item[] = [
   { id: "p-dash", label: "Dashboard", icon: "home", href: "/dashboard", group: "Go to" },
-  { id: "p-new", label: "Fix a bug", icon: "bug", href: "/new", group: "Go to" },
+  { id: "p-new", label: "New task", icon: "bug", href: "/new", group: "Go to" },
   { id: "p-int", label: "Integrations", icon: "plug", href: "/integrations", group: "Go to" },
   { id: "p-tok", label: "API tokens", icon: "key", href: "/settings/tokens", group: "Go to" },
   { id: "p-try", label: "Live demo", icon: "play", href: "/try", group: "Go to" },

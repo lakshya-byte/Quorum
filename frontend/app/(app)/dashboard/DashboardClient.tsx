@@ -6,16 +6,31 @@ import { errorMessage, githubApi, runsApi, safetySummary, slackApi, type Bug, ty
 import { RequireAuth, useAuth } from "../../_lib/auth";
 import { isFinishedRun } from "../../_lib/useRunStream";
 import { fmtMs } from "../../_components/run/NodeCard";
+import { savedHardCount, typeLabel } from "../../_lib/swarm";
 import { Badge, Card, EmptyState, ErrorNote, Icon, LinkButton, PageHeader, Skeleton, StatusChip, cx, type RunStatus } from "../../_ui";
 
 function statusOf(r: Run): RunStatus {
   if (!isFinishedRun(r)) return "running";
+  if (r.outcome === "complete" || r.outcome === "partial" || r.outcome === "needs_input") return r.outcome;
+  if (r.outcome === "blocked") return "blocked";
   if (r.solved) return "solved";
   if ((r.status || "").toLowerCase() === "failed") return "failed";
   return "unsolved";
 }
 
+function gates(r: Run): string | null {
+  const h = savedHardCount(r.criteriaSummary);
+  return h ? `${h.pass}/${h.total} gates` : null;
+}
+
+function agentsText(r: Run): string {
+  if (r.agentsSpawned == null) return "–";
+  return `${r.agentsSpawned}${r.peakParallel ? ` · peak ${r.peakParallel}` : ""}`;
+}
+
 function bestTests(r: Run): string {
+  const g = gates(r);
+  if (g) return g;
   if (r.bestTotal) return `${r.bestPassed ?? 0}/${r.bestTotal}`;
   const nodes = r.nodes || [];
   const best = r.bestNodeId != null ? nodes.find((n) => n.id === r.bestNodeId) : undefined;
@@ -55,7 +70,7 @@ function Stat({ label, value, hint }: { label: string; value: string | number; h
 function Checklist({ gh, slack, runs }: { gh: GithubStatus | null; slack: SlackStatus | null; runs: Run[] | null }) {
   const items = [
     { done: !!gh?.connected, title: "Connect GitHub", body: "Install the GitHub App, or use the offline demo account.", href: "/integrations", cta: "Connect" },
-    { done: !!runs && runs.some((r) => r.kind === "repo"), title: "Fix your first bug", body: "Pick a repository and describe the problem.", href: "/new", cta: "Start", locked: !gh?.connected },
+    { done: !!runs && runs.some((r) => r.kind === "repo"), title: "Run your first task", body: "Pick a repository and describe a bug, feature, refactor or UI change.", href: "/new", cta: "Start", locked: !gh?.connected },
     { done: !!slack?.configured, title: "Add Slack (optional)", body: "Get a message when a run finishes.", href: "/integrations", cta: "Set up" },
   ];
   const doneCount = items.filter((i) => i.done).length;
@@ -132,7 +147,7 @@ function DashboardInner() {
   }, [anyRunning, load]);
 
   const total = runs?.length ?? 0;
-  const solved = (runs || []).filter((r) => r.solved).length;
+  const solved = (runs || []).filter((r) => r.solved || r.outcome === "complete").length;
   const prs = (runs || []).filter((r) => r.prUrl).length;
   const merged = (runs || []).filter((r) => r.merged).length;
 
@@ -147,7 +162,7 @@ function DashboardInner() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Runs" value={runs ? total : "–"} />
-        <Stat label="Solved" value={runs ? solved : "–"} hint={runs && total ? `${Math.round((solved / total) * 100)}% of your runs` : undefined} />
+        <Stat label="Complete" value={runs ? solved : "–"} hint={runs && total ? `${Math.round((solved / total) * 100)}% of your runs` : undefined} />
         <Stat label="Pull requests" value={runs ? prs : "–"} />
         <Stat label="Merged by you" value={runs ? merged : "–"} />
       </div>
@@ -174,7 +189,7 @@ function DashboardInner() {
             description="Describe a bug in one of your repositories and PatchLoop will try to fix it. You will see every attempt live."
             action={
               <LinkButton href="/new" icon="plus">
-                Fix your first bug
+                Start your first task
               </LinkButton>
             }
           />
@@ -184,7 +199,7 @@ function DashboardInner() {
               <table className="w-full text-left text-[13px]" data-testid="runs-table">
                 <thead>
                   <tr className="border-b border-border text-[12px] text-on-surface-variant">
-                    {["Status", "Problem", "Source", "Tests", "Cost", "Speed", "Safety", "PR", "Started"].map((h) => (
+                    {["Outcome", "Task", "Source", "Checks", "Agents", "Cost", "Speed", "Safety", "PR", "Started"].map((h) => (
                       <th key={h} scope="col" className="whitespace-nowrap px-4 py-2.5 font-medium">
                         {h}
                       </th>
@@ -201,6 +216,9 @@ function DashboardInner() {
                         <Link href={`/runs/${r.id}`} className="focus-ring block truncate rounded font-medium text-white hover:text-primary" title={title(r, bugs)}>
                           {title(r, bugs)}
                         </Link>
+                        <span className="mb-0.5 block">
+                          <Badge tone="info">{typeLabel(r.taskType || (r.kind === "repo" ? "bugfix" : "bugfix"))}</Badge>
+                        </span>
                         <span className="block truncate font-mono text-[11.5px] text-text-subtle">
                           {r.kind === "repo" ? `${r.repo} · ${r.branch}` : "demo bug"}
                           {r.traceId ? ` · ${r.traceId}` : ""}
@@ -208,6 +226,7 @@ function DashboardInner() {
                       </td>
                       <td className="px-4 py-3 text-on-surface-variant">{r.source || "web"}</td>
                       <td className="px-4 py-3 font-mono text-[12.5px] text-on-surface">{bestTests(r)}</td>
+                      <td className="px-4 py-3 font-mono text-[12.5px] text-on-surface-variant" title="Agents spawned, peak in parallel">{agentsText(r)}</td>
                       <td className="px-4 py-3 font-mono text-[12.5px] text-on-surface-variant" title="Tokens used">{tokens(r)} tok</td>
                       <td className="px-4 py-3 font-mono text-[12.5px] text-on-surface-variant">{fmtMs(r.latencyMs)}</td>
                       <td className="px-4 py-3">
@@ -251,7 +270,9 @@ function DashboardInner() {
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-x-3 font-mono text-[11.5px] text-on-surface-variant">
                       <span>{r.kind === "repo" ? r.repo : "demo bug"}</span>
-                      <span>tests {bestTests(r)}</span>
+                      <span>{r.taskType ? typeLabel(r.taskType) : "Bug fix"}</span>
+                      <span>{bestTests(r)}</span>
+                      {r.agentsSpawned != null ? <span>{r.agentsSpawned} agents</span> : null}
                       <span>{tokens(r)} tok</span>
                       <span>{fmtMs(r.latencyMs)}</span>
                       {r.prNumber ? <span>PR #{r.prNumber}</span> : null}
