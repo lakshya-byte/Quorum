@@ -22,6 +22,7 @@ from app.llm import make_client
 from app.proposers import model_for, new_usage, propose_fake, propose_live
 from app.sandbox import LocalSandbox, NebiusSandbox, Sandbox
 from app.search import SearchConfig, run_search
+from app.swarm.events import compact_events
 from app.telemetry import background_run, record_event, run_id_var, trace_id_var
 
 log = logging.getLogger(__name__)
@@ -91,6 +92,14 @@ class Run:
     files_changed: int = 0
     prices: tuple[float, float] = (0.0, 0.0)
     ttfe_ms: int | None = None
+    # swarm (contract v3). `artifact_store` lives in memory only; `swarm` holds the persisted result (plan, commits, rows).
+    task_type: str = ""
+    outcome: str = ""
+    criteria: dict[str, Any] = field(default_factory=dict)
+    agents: dict[str, Any] = field(default_factory=dict)
+    plan: dict[str, Any] = field(default_factory=dict)
+    swarm: dict[str, Any] = field(default_factory=dict)
+    artifact_store: Any = field(default=None, repr=False)
     _token: str = field(default="", repr=False)
     _pr_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _signal: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
@@ -172,6 +181,8 @@ class Run:
                 "kind": "repo", "pr_url": self.pr_url, "pr_number": self.pr_number, "pr_branch": self.pr_branch,
                 "files_changed": self.files_changed, "safety": safety_summary(self.events, best),
                 "status": self.status, "source": self.source, "issue_ref": self.issue_ref,
+                "task_type": self.task_type, "outcome": self.outcome, "criteria": self.criteria,
+                "agents": self.agents, "plan": self.plan,
             })
         return out
 
@@ -181,22 +192,24 @@ class Run:
     def public(self) -> dict[str, Any]:
         out = {
             "run_id": self.run_id, "bug_id": self.bug_id, "mode": self.mode, "engine": self.engine,
-            "status": self.status, "events": self.events, "pr_draft": self.pr_draft, "pr_url": self.pr_url,
-            "replay_of": self.replay_of,
+            "status": self.status, "events": compact_events(self.events) if self.kind == "repo" else self.events,
+            "pr_draft": self.pr_draft, "pr_url": self.pr_url, "replay_of": self.replay_of,
         }
         if self.kind == "repo":
             out.update({**self.repo_fields(), "kind": "repo", "pr_number": self.pr_number,
-                        "pr_branch": self.pr_branch, "files_changed": self.files_changed, "source": self.source})
+                        "pr_branch": self.pr_branch, "files_changed": self.files_changed, "source": self.source,
+                        "task_type": self.task_type, "outcome": self.outcome, "criteria": self.criteria,
+                        "agents": self.agents, "plan": self.plan})
         return out
 
     def to_record(self) -> dict[str, Any]:
         rec = {
             **self.summary(), "status": self.status, "created_at": self.created_at,
-            "replay_of": self.replay_of, "events": self.events, "pr_draft": self.pr_draft,
-            "pr_url": self.pr_url, "trace_id": self.trace_id,
+            "replay_of": self.replay_of, "events": compact_events(self.events) if self.kind == "repo" else self.events,
+            "pr_draft": self.pr_draft, "pr_url": self.pr_url, "trace_id": self.trace_id,
         }
         if self.kind == "repo":  # NEVER the token: only what is needed to open or update the PR later
-            rec.update({"kind": "repo", "demo": self.demo, "cause": self.cause, "repro_path": self.repro_path,
+            rec.update({"swarm": self.swarm, "kind": "repo", "demo": self.demo, "cause": self.cause, "repro_path": self.repro_path,
                         "run_url": self.run_url, "followup_meta": bool(self.followup), "pr_fake": self.pr_fake,
                         "followup_pr": (self.followup or {}).get("pr_branch") and
                         {"pr_branch": self.followup["pr_branch"], "pr_number": self.followup.get("pr_number")}})
@@ -216,6 +229,8 @@ class Run:
             repro_path=rec.get("repro_path", ""), pr_number=rec.get("pr_number"), pr_branch=rec.get("pr_branch", ""),
             pr_fake=bool(rec.get("pr_fake")), files_changed=rec.get("files_changed", 0),
             followup=rec.get("followup_pr") or None,
+            task_type=rec.get("task_type", ""), outcome=rec.get("outcome", ""), criteria=rec.get("criteria") or {},
+            agents=rec.get("agents") or {}, plan=rec.get("plan") or {}, swarm=rec.get("swarm") or {},
         )
 
 
@@ -234,6 +249,10 @@ class RunRegistry:
 
         self.repo_fetcher: Any = fetch_github
         self.github_factory: Any = HttpGitHub
+        # swarm (contract v3): injectable for tests / alternative sandboxes
+        self.swarm_deps: Any = None  # SwarmDeps; None = load app.swarm.{workspace,verifiers} lazily
+        self.swarm_llm_factory: Any = None  # callable(SwarmCtx) -> (role, tier) -> ChatLLM; None = live Nebius
+        self._fake_swarm: Any = None
 
     # ---- mode and wiring -------------------------------------------------
 
@@ -271,6 +290,13 @@ class RunRegistry:
             model_for=lambda depth: model_for(depth, self.settings, run.model_override),
         )
         return propose, cfg
+
+    def fake_swarm(self) -> Any:
+        if self._fake_swarm is None:
+            from app.swarm.fake_swarm import FakeSwarm
+
+            self._fake_swarm = FakeSwarm(delay_scale=self.settings.fake_delay_scale)
+        return self._fake_swarm
 
     def team(self, mode: str, model_override: str | None = None) -> Any:
         if mode == "fake":
@@ -391,6 +417,9 @@ class RunRegistry:
             "cancelled": ctx.cancelled if ctx else 0,
             "kind": run.kind, "repo": run.repo, "source": run.source or "api",
             "cost_usd": usage.get("cost_usd") or 0.0, "ttfe_ms": run.ttfe_ms or 0,
+            "task_type": run.task_type or "unknown", "outcome": run.outcome or "unknown",
+            "agents": int(run.agents.get("spawned", 0)) if run.agents else 0,
+            "peak_parallel": int(run.agents.get("peak_parallel", 0)) if run.agents else 0,
             "pr_opened": bool(run.pr_url), "guard_blocks": sum(
                 1 for e in run.events if e["type"] == "guard" and e["data"].get("verdict") == "block"),
         })

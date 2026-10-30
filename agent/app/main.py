@@ -9,7 +9,7 @@ import logging
 from typing import Any, AsyncIterator, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from app.bugs import BUGS, get_bug
@@ -68,6 +68,33 @@ class RepoRunRequest(BaseModel):
     followup: FollowupBody | None = None
     source: Literal["web", "cli", "slack", "github", "api"] = "api"
     issue_ref: int | None = Field(default=None, ge=1)
+    # contract v3 (swarm)
+    task_type: TASK_TYPES = "auto"
+    strict: list[str] = Field(default_factory=list, max_length=20)
+    limits: LimitsBody | None = None
+    answers: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def check_swarm_fields(self) -> "RepoRunRequest":
+        import re
+
+        if any(not re.match(ID_PATTERN, x) for x in self.strict):
+            raise ValueError("strict entries must be criterion ids ([A-Za-z0-9_.-], max 60 chars)")
+        if len(self.answers) > 10 or any(not re.match(ID_PATTERN, k) or len(v) > 2000 for k, v in self.answers.items()):
+            raise ValueError("answers: at most 10 entries, ids [A-Za-z0-9_.-], values <= 2000 chars")
+        return self
+
+
+class LimitsBody(BaseModel):
+    """User-requested run limits. They are only ever LOWERED by the env caps (SWARM_MAX_*), never raised."""
+
+    max_workers: int | None = Field(default=None, ge=1, le=1000)
+    max_tokens: int | None = Field(default=None, ge=1000, le=100_000_000)
+    max_wall_s: float | None = Field(default=None, ge=1, le=86_400)
+
+
+TASK_TYPES = Literal["auto", "bugfix", "feature", "refactor", "ui", "tests", "perf", "deps", "docs", "migration", "other"]
+ID_PATTERN = r"^[A-Za-z0-9_.-]{1,60}$"
 
 
 class PRRequest(BaseModel):
@@ -168,11 +195,27 @@ def build_router(registry: RunRegistry) -> APIRouter:
             token=body.github_token.get_secret_value() if body.github_token else "", auto_pr=body.auto_pr,
             user_id=body.user_id, engine=body.engine, run_url=body.run_url, source=body.source,
             issue_ref=body.issue_ref, followup=fu.model_dump() if fu else None,
+            task_type=body.task_type, strict=list(body.strict),
+            limits=body.limits.model_dump(exclude_none=True) if body.limits else {}, answers=dict(body.answers),
         )
         run = registry.start_repo(spec, trace_id, trace_headers)
         log.info("repo run started repo=%s source=%s mode=%s", run.repo, run.source, run.mode,
                  extra={"run_id": run.run_id, "trace_id": trace_id})
         return {"run_id": run.run_id, "mode": run.mode, "engine": run.engine, "trace_id": trace_id}
+
+    @router.get("/runs/{run_id}/artifacts")
+    async def list_artifacts(run_id: str) -> list[dict[str, Any]]:
+        from app.swarm.artifacts_api import artifact_meta, store_items
+
+        run = require_run(run_id)
+        return [artifact_meta(a) for a in store_items(run.artifact_store)]
+
+    @router.get("/runs/{run_id}/artifacts/{artifact_id}")
+    async def get_artifact(run_id: str, artifact_id: str) -> Response:
+        from app.swarm.artifacts_api import artifact_response
+
+        run = require_run(run_id)
+        return artifact_response(run.artifact_store, artifact_id, [run._token])
 
     @router.post("/runs/{run_id}/pr")
     async def create_pr(run_id: str, body: PRRequest | None = None) -> dict[str, Any]:
