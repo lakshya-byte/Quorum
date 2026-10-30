@@ -57,6 +57,19 @@ Ctrl-C closes only the stream (exit 130); resume with `patchloop watch <run-id>`
 open, mergeable and checks are green (a repo with no CI is allowed, with a warning), asks for
 confirmation (skip with `--yes`) and merges as **you**: the agents have no merge ability.
 
+## Any task, not just bugs (swarm)
+
+```bash
+patchloop do --repo octo/widgets --type ui "make the header responsive"
+patchloop do --repo octo/widgets --strict vision_rubric --limits workers=4,tokens=500000,wall=600 "add percentage coupons"
+patchloop artifacts <run> --save ./artifacts     # screenshots, logs, reports
+patchloop answer <run> "1: the cart module"      # when a run needs input
+```
+
+`do` is `fix` for any task type (`--type auto|bugfix|feature|refactor|ui|tests|perf|deps|docs|migration|other`).
+On a terminal you get a live frame (plan, criteria and gate table, agent lanes, merge, budget); in pipes, one line per event.
+Exit codes: 0 complete, 3 partial, 1 failed/blocked, 2 error, 4 needs input. The PR URL is the last stdout line.
+
 ## Commands
 
 | Command | What it does |
