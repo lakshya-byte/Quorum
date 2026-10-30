@@ -39,6 +39,7 @@ function Stat({ label, children }: { label: string; children: ReactNode }) {
 
 export function runChip(state: RunState): { status: RunStatus; label?: string } {
   const { status, done, blocked } = state;
+  if (done?.outcome === "complete" || done?.outcome === "partial" || done?.outcome === "needs_input") return { status: done.outcome };
   if (blocked && (!done || !done.solved)) return { status: "blocked" };
   if (done?.solved) return { status: "solved" };
   if (state.errors.length && done) return { status: "failed" };

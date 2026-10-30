@@ -23,7 +23,7 @@ export function Badge({ tone = "neutral", icon, mono, className, children, title
   );
 }
 
-export type RunStatus = "running" | "solved" | "unsolved" | "failed" | "blocked" | "queued";
+export type RunStatus = "running" | "solved" | "unsolved" | "failed" | "blocked" | "queued" | "complete" | "partial" | "needs_input";
 const STATUS: Record<RunStatus, { tone: Tone; label: string; icon: IconName; pulse?: boolean }> = {
   running: { tone: "info", label: "Running", icon: "loader", pulse: true },
   queued: { tone: "neutral", label: "Queued", icon: "clock" },
@@ -31,6 +31,9 @@ const STATUS: Record<RunStatus, { tone: Tone; label: string; icon: IconName; pul
   unsolved: { tone: "warning", label: "Unsolved", icon: "alert" },
   failed: { tone: "danger", label: "Failed", icon: "x-circle" },
   blocked: { tone: "danger", label: "Blocked", icon: "ban" },
+  complete: { tone: "success", label: "Complete", icon: "check-circle" },
+  partial: { tone: "warning", label: "Partial", icon: "alert" },
+  needs_input: { tone: "info", label: "Needs input", icon: "info" },
 };
 
 export function StatusChip({ status, label, className }: { status: RunStatus; label?: string; className?: string }) {
