@@ -144,6 +144,7 @@ func Build(cfg *config.Config, st Stores, auth Auth, nr *newrelic.Application, t
 	// Issue/comment-triggered runs share the same per-user budget.
 	ghWebhook := service.NewGitHubWebhook(cfg.GitHubWebhookSecret, github, runService, st.Dedupe)
 	ghWebhook.AllowTask = func(userID string) bool { ok, _ := taskLimiter.Allow(userID); return ok }
+	slackApp.AllowTask = ghWebhook.AllowTask // Slack-started swarms spend the same budget
 
 	runHandler := handler.NewRunHandler(runService, handler.RunHandlerConfig{
 		GuestLimiter: ratelimit.New(cfg.GuestRunsPerHour, time.Hour),

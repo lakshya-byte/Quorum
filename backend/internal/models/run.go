@@ -140,6 +140,7 @@ type Run struct {
 	PeakParallel    int              `bson:"peak_parallel,omitempty" json:"peakParallel"`
 	Artifacts       []any            `bson:"artifacts,omitempty" json:"artifacts"`
 	Questions       []any            `bson:"questions,omitempty" json:"questions,omitempty"`
+	Answered        bool             `bson:"answered,omitempty" json:"answered,omitempty"` // started with answers to a needs_input run
 	ParentRunID     string           `bson:"parent_run_id,omitempty" json:"parentRunId"`
 	Slack           *SlackRef        `bson:"slack,omitempty" json:"slack"`
 	Issue           *IssueRef        `bson:"issue,omitempty" json:"issue"`

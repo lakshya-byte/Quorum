@@ -297,6 +297,7 @@ func (s *RunService) StartRepoRun(ctx context.Context, in RepoRunInput) (*models
 		BugID: in.Repo, Status: models.RunStatusRunning, Nodes: []any{},
 		TaskType: taskType, Strict: strict, Limits: limits,
 	}
+	run.Answered = in.AnswerFor != nil
 	run.TaskTypeSource = "auto"
 	if taskType != models.TaskTypeAuto {
 		run.TaskTypeSource = "user"

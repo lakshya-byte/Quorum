@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -18,7 +17,7 @@ import (
 )
 
 const slackHelp = "*PatchLoop commands*\n" +
-	"• `/patchloop fix <problem>` (add `repo:owner/name` to pick a repo)\n" +
+	"• `/patchloop fix <problem>` or `/patchloop do <task>`: bug, feature, refactor, UI change ... (add `repo:owner/name` to pick a repo and `type:feature|bugfix|refactor|ui|tests|perf|deps|docs|migration|other` to pick the task type; default is auto)\n" +
 	"• `/patchloop repo owner/name` sets your default repo\n" +
 	"• `/patchloop link <code>` connects Slack to your PatchLoop account (get the code on the Integrations page)\n" +
 	"• Or mention `@PatchLoop` with a pasted error. Reply in a run's thread to ask for changes."
@@ -27,12 +26,29 @@ const slackLinkHint = "Your Slack user is not linked to a PatchLoop account yet.
 
 var (
 	repoTokenPattern = regexp.MustCompile(`(?i)\brepo:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)`)
+	typeTokenPattern = regexp.MustCompile(`(?i)(^|\s)type:([A-Za-z]+)\b`)
 	mentionPattern   = regexp.MustCompile(`<@[A-Z0-9]+(\|[^>]*)?>`)
 )
 
+// ExtractTaskType pulls an optional `type:<task type>` token out of free text
+// (Slack commands/mentions, GitHub comments). It returns the type ("" when
+// absent) and the text without the token; an unknown type is an error.
+func ExtractTaskType(text string) (taskType, rest string, err error) {
+	m := typeTokenPattern.FindStringSubmatch(text)
+	if m == nil {
+		return "", text, nil
+	}
+	t := strings.ToLower(m[2])
+	if !models.ValidTaskType(t) {
+		return "", text, fmt.Errorf("unknown task type `%s`: use one of %s", t, strings.Join(models.TaskTypes, ", "))
+	}
+	rest = strings.TrimSpace(typeTokenPattern.ReplaceAllString(text, " "))
+	return t, rest, nil
+}
+
 type pendingFix struct {
-	userID, slackUserID, problem, channel, threadTS string
-	expires                                         time.Time
+	userID, slackUserID, problem, taskType, channel, threadTS string
+	expires                                                   time.Time
 }
 
 // SlackApp is the Slack workspace app: slash command, events, interactive
@@ -51,6 +67,17 @@ type SlackApp struct {
 	now     func() time.Time
 	// Sync makes handlers run their async work inline (tests).
 	Sync bool
+	// AllowTask is the per-user hourly task budget shared with the API (nil = unlimited).
+	AllowTask func(userID string) bool
+}
+
+// allowed spends one task from the user's budget, telling the thread when it is gone.
+func (a *SlackApp) allowed(ctx context.Context, userID, channel, threadTS string) bool {
+	if a.AllowTask == nil || a.AllowTask(userID) {
+		return true
+	}
+	a.say(ctx, channel, threadTS, "You have reached the hourly task limit; try again later.")
+	return false
 }
 
 func NewSlackApp(signingSecret string, api *SlackAPI, settings *SlackSettingsService, runs *RunService, merge *MergeService, github *GitHubService, dedupe DedupeStore) *SlackApp {
@@ -116,13 +143,16 @@ func (a *SlackApp) HandleCommand(ctx context.Context, cmd SlackCommand) map[stri
 			return ephemeral("Could not save your default repo.")
 		}
 		return ephemeral("Default repo set to `" + rest + "`.")
-	case "fix":
+	case "fix", "do":
 		userID := a.settings.UserFor(ctx, cmd.UserID)
 		if userID == "" {
 			return ephemeral(slackLinkHint)
 		}
 		if rest == "" {
-			return ephemeral("Describe the problem: `/patchloop fix pagination returns the wrong last page`")
+			return ephemeral("Describe the task: `/patchloop fix pagination returns the wrong last page` or `/patchloop do type:feature add percentage coupons`")
+		}
+		if _, _, err := ExtractTaskType(rest); err != nil {
+			return ephemeral(err.Error())
 		}
 		if !a.api.Enabled() {
 			return ephemeral("The PatchLoop Slack bot token is not configured on this server.")
@@ -205,8 +235,22 @@ func (a *SlackApp) onMessage(ctx context.Context, evType, slackUser, channel, ts
 				}
 				return
 			}
+			if run.Outcome == models.OutcomeNeedsInput && run.Status == models.RunStatusCompleted {
+				// The reply answers the planner's questions: re-run with the answers.
+				if !a.allowed(ctx, userID, channel, threadTS) {
+					return
+				}
+				answers := ParseSlackAnswers(run, text)
+				if _, err := a.runs.Answer(ctx, run, models.SourceSlack, answers, nil); err != nil {
+					_, _ = a.api.PostMessage(ctx, channel, threadTS, "Could not continue with your answers: "+slackEscape(errMsg(err)), nil)
+				}
+				return
+			}
 			if run.Status != models.RunStatusCompleted || run.PRNumber == 0 {
 				_ = a.api.PostEphemeral(ctx, channel, slackUser, threadTS, "The run has no pull request yet; changes can be requested once the PR is open.")
+				return
+			}
+			if !a.allowed(ctx, userID, channel, threadTS) {
 				return
 			}
 			child, err := a.runs.Followup(ctx, run, models.SourceSlack, text, nil)
@@ -243,12 +287,20 @@ func (a *SlackApp) startFromSlack(ctx context.Context, userID, slackUser, channe
 		repo = m[1]
 		problem = strings.TrimSpace(repoTokenPattern.ReplaceAllString(problem, ""))
 	}
+	taskType, problem, err := ExtractTaskType(problem)
+	if err != nil {
+		_ = a.api.PostEphemeral(ctx, channel, slackUser, threadTS, slackEscape(err.Error()))
+		return
+	}
 	if problem == "" {
-		_ = a.api.PostEphemeral(ctx, channel, slackUser, threadTS, "Tell me what is wrong, e.g. `/patchloop fix pagination returns the wrong last page`.")
+		_ = a.api.PostEphemeral(ctx, channel, slackUser, threadTS, "Tell me what to do, e.g. `/patchloop fix pagination returns the wrong last page`.")
 		return
 	}
 	// Root message: the thread everything else hangs off.
 	rootText := "PatchLoop is looking into: " + slackEscape(truncate(problem, 200))
+	if taskType != "" {
+		rootText += " (type: " + taskType + ")"
+	}
 	rootTS, err := a.api.PostMessage(ctx, channel, threadTS, rootText, nil)
 	if err != nil {
 		slog.Error("slack root message failed", "error", err.Error())
@@ -274,11 +326,11 @@ func (a *SlackApp) startFromSlack(ctx context.Context, userID, slackUser, channe
 		case 1:
 			repo = repos[0].FullName
 		default:
-			a.askRepo(ctx, userID, slackUser, channel, threadTS, problem, repos)
+			a.askRepo(ctx, userID, slackUser, channel, threadTS, problem, taskType, repos)
 			return
 		}
 	}
-	a.launch(ctx, userID, channel, threadTS, rootTS, repo, problem)
+	a.launch(ctx, userID, channel, threadTS, rootTS, repo, problem, taskType)
 }
 
 func errMsg(err error) string {
@@ -295,9 +347,12 @@ func (a *SlackApp) say(ctx context.Context, channel, threadTS, text string) {
 	}
 }
 
-func (a *SlackApp) launch(ctx context.Context, userID, channel, threadTS, rootTS, repo, problem string) {
+func (a *SlackApp) launch(ctx context.Context, userID, channel, threadTS, rootTS, repo, problem, taskType string) {
+	if !a.allowed(ctx, userID, channel, threadTS) {
+		return
+	}
 	_, err := a.runs.StartRepoRun(ctx, RepoRunInput{
-		UserID: userID, Repo: repo, Task: problem, Source: models.SourceSlack, AutoPR: true,
+		UserID: userID, Repo: repo, Task: problem, Source: models.SourceSlack, AutoPR: true, TaskType: taskType,
 		Slack: &models.SlackRef{Channel: channel, ThreadTS: threadTS, RootTS: rootTS},
 	})
 	if err != nil {
@@ -305,7 +360,7 @@ func (a *SlackApp) launch(ctx context.Context, userID, channel, threadTS, rootTS
 	}
 }
 
-func (a *SlackApp) askRepo(ctx context.Context, userID, slackUser, channel, threadTS, problem string, repos []GitHubRepo) {
+func (a *SlackApp) askRepo(ctx context.Context, userID, slackUser, channel, threadTS, problem, taskType string, repos []GitHubRepo) {
 	idb := make([]byte, 6)
 	_, _ = rand.Read(idb)
 	id := hex.EncodeToString(idb)
@@ -315,7 +370,7 @@ func (a *SlackApp) askRepo(ctx context.Context, userID, slackUser, channel, thre
 			delete(a.pending, k)
 		}
 	}
-	a.pending[id] = pendingFix{userID: userID, slackUserID: slackUser, problem: problem, channel: channel, threadTS: threadTS, expires: a.now().Add(15 * time.Minute)}
+	a.pending[id] = pendingFix{userID: userID, slackUserID: slackUser, problem: problem, taskType: taskType, channel: channel, threadTS: threadTS, expires: a.now().Add(15 * time.Minute)}
 	a.mu.Unlock()
 
 	if len(repos) > 100 {
@@ -435,159 +490,5 @@ func (a *SlackApp) onPickRepo(ctx context.Context, slackUser, channel, messageTS
 		return
 	}
 	_ = a.api.UpdateMessage(ctx, p.channel, messageTS, "Using `"+repo+"`.", nil)
-	a.launch(ctx, p.userID, p.channel, p.threadTS, p.threadTS, repo, p.problem)
+	a.launch(ctx, p.userID, p.channel, p.threadTS, p.threadTS, repo, p.problem, p.taskType)
 }
-
-// ---- RunObserver ----------------------------------------------------------
-
-func (a *SlackApp) RunStarted(run *models.Run) {
-	if !a.api.Enabled() || run.Slack == nil {
-		return
-	}
-	cp := *run
-	a.async(func() { a.watch(&cp) })
-}
-
-// watch turns the agent's event stream into threaded Slack updates.
-func (a *SlackApp) watch(run *models.Run) {
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
-	defer cancel()
-	ref := run.Slack
-	say := func(text string) { a.say(ctx, ref.Channel, ref.ThreadTS, text) }
-
-	if run.ParentRunID != "" {
-		say("Working on your requested changes. I will push one new commit to the same pull request.")
-	} else {
-		say(fmt.Sprintf("Started on `%s` (%s). Live view: %s", run.Repo, run.Branch, a.runs.RunURL(run)))
-	}
-
-	var (
-		roundTS   string
-		roundN    int
-		roundRows []string
-		cause     string
-	)
-	flushRound := func() {
-		if roundTS == "" {
-			return
-		}
-		text := fmt.Sprintf("*Round %d*\n%s", roundN, strings.Join(roundRows, "\n"))
-		if err := a.api.UpdateMessage(ctx, ref.Channel, roundTS, text, nil); err != nil {
-			slog.Warn("slack round update failed", "error", err.Error())
-		}
-	}
-	err := a.runs.Agent().StreamEvents(ctx, run.AgentRunID, func(typ string, d map[string]any) bool {
-		switch typ {
-		case "repo":
-			say(fmt.Sprintf("Repo scanned: %v files, language %v, tests: `%v`", d["files"], d["language"], d["test_command"]))
-		case "triage":
-			if c, ok := d["cause"].(string); ok {
-				cause = c
-			}
-		case "locate":
-			files := []string{}
-			if fs, ok := d["files"].([]any); ok {
-				for _, f := range fs {
-					if m, ok := f.(map[string]any); ok {
-						files = append(files, fmt.Sprintf("`%v`", m["path"]))
-					}
-				}
-			}
-			t := "Cause located in " + strings.Join(files, ", ")
-			if cause != "" {
-				t += ": " + slackEscape(truncate(cause, 300))
-			}
-			say(t)
-		case "repro":
-			if d["failed_on_original"] == true {
-				say(fmt.Sprintf("Reproducer written: `%v` (fails on the original code)", d["test_name"]))
-			} else {
-				say("Could not write a reproducer that fails on the original code; using the existing tests.")
-			}
-		case "round":
-			flushRound()
-			n, _ := toInt(d["depth"])
-			roundN, roundRows = n+1, nil
-			ts, err := a.api.PostMessage(ctx, ref.Channel, ref.ThreadTS, fmt.Sprintf("*Round %d*\ntrying candidates…", roundN), nil)
-			if err == nil {
-				roundTS = ts
-			}
-		case "node":
-			p, _ := toInt(d["passed"])
-			t, _ := toInt(d["total"])
-			idea, _ := d["idea"].(string)
-			roundRows = append(roundRows, fmt.Sprintf("• #%v %s: %d/%d tests", d["id"], slackEscape(truncate(idea, 80)), p, t))
-			flushRound()
-		case "done":
-			flushRound()
-			if d["solved"] == true {
-				say("Winner found: a candidate passes the reproducer and the full existing suite.")
-			} else {
-				say("No candidate passed all tests.")
-			}
-		case "pr":
-			u, _ := d["url"].(string)
-			if d["updated"] == true {
-				say("Pull request updated with a new commit: " + u)
-			} else {
-				say("Pull request opened: " + u)
-			}
-		case "error":
-			say("The run hit an error: " + slackEscape(fmt.Sprint(d["message"])))
-		}
-		return true
-	})
-	flushRound()
-	if err != nil && ctx.Err() == nil {
-		slog.Warn("slack watcher ended", "error", err.Error())
-	}
-}
-
-// RunCompleted posts the final Block Kit message with Review / Merge / Ask
-// for changes buttons.
-func (a *SlackApp) RunCompleted(ctx context.Context, run *models.Run) {
-	if !a.api.Enabled() || run.Slack == nil {
-		return
-	}
-	cp := *run
-	a.async(func() {
-		c, cancel := bg()
-		defer cancel()
-		tests := "n/a"
-		if p, t, ok := TestsPassed(&cp); ok {
-			tests = fmt.Sprintf("%d/%d passed", p, t)
-		}
-		buttons := []map[string]any{{
-			"type": "button", "action_id": "open_run", "text": map[string]any{"type": "plain_text", "text": "Review"}, "url": a.runs.RunURL(&cp)}}
-		if cp.PRURL != "" && cp.Solved {
-			buttons[0]["url"] = cp.PRURL
-			buttons = append(buttons,
-				map[string]any{"type": "button", "style": "primary", "action_id": "pl_merge", "value": cp.ID.Hex(),
-					"text":    map[string]any{"type": "plain_text", "text": "Merge"},
-					"confirm": map[string]any{"title": map[string]any{"type": "plain_text", "text": "Merge this PR?"}, "text": map[string]any{"type": "mrkdwn", "text": "Merges with your GitHub permissions once checks are green."}, "confirm": map[string]any{"type": "plain_text", "text": "Merge"}, "deny": map[string]any{"type": "plain_text", "text": "Cancel"}}},
-				map[string]any{"type": "button", "action_id": "pl_changes", "value": cp.ID.Hex(),
-					"text": map[string]any{"type": "plain_text", "text": "Ask for changes"}})
-		}
-		blocks := []map[string]any{
-			{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": "*" + RepoResultText(&cp) + "*\n>" + slackEscape(truncate(cp.Task, 280))}},
-			{"type": "section", "fields": []map[string]any{
-				{"type": "mrkdwn", "text": "*Repo*\n" + slackEscape(cp.Repo)},
-				{"type": "mrkdwn", "text": "*Proof*\n" + tests + " over " + fmt.Sprint(len(cp.Nodes)) + " attempts"},
-			}},
-			{"type": "context", "elements": []map[string]any{{"type": "mrkdwn", "text": "Agents cannot merge. A human reviews and merges."}}},
-			{"type": "actions", "elements": buttons},
-		}
-		text := "PatchLoop: " + RepoResultText(&cp)
-		if _, err := a.api.PostMessage(c, cp.Slack.Channel, cp.Slack.ThreadTS, text, blocks); err != nil {
-			slog.Error("slack final message failed", "error", err.Error())
-			return
-		}
-		_ = a.runs.runs.SetSlackSent(c, cp.ID.Hex())
-	})
-}
-
-// BotConfigured reports whether threaded updates are possible.
-func (a *SlackApp) BotConfigured() bool { return a.api.Enabled() }
-
-// LinkEscape is exported for tests that build Slack form bodies.
-func LinkEscape(s string) string { return url.QueryEscape(s) }

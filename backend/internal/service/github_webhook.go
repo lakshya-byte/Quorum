@@ -68,6 +68,9 @@ type webhookPayload struct {
 		Title       string          `json:"title"`
 		Body        string          `json:"body"`
 		PullRequest json.RawMessage `json:"pull_request"`
+		Labels      []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
 	} `json:"issue"`
 	Comment struct {
 		Body              string `json:"body"`
@@ -106,7 +109,7 @@ func (w *GitHubWebhook) Handle(ctx context.Context, event, delivery string, body
 		}
 	case "issues":
 		if p.Action == "labeled" && strings.EqualFold(p.Label.Name, "patchloop") && !isBot {
-			return w.fromIssue(ctx, &p, p.Issue.Title+"\n\n"+p.Issue.Body)
+			return w.fromIssue(ctx, &p, p.Issue.Title+"\n\n"+p.Issue.Body, labelTaskType(&p))
 		}
 	case "issue_comment":
 		if p.Action != "created" || p.Comment.User.Type == "Bot" || strings.HasSuffix(p.Comment.User.Login, "[bot]") {
@@ -119,14 +122,42 @@ func (w *GitHubWebhook) Handle(ctx context.Context, event, delivery string, body
 		if len(p.Issue.PullRequest) > 0 && string(p.Issue.PullRequest) != "null" {
 			return w.fromPRComment(ctx, &p)
 		}
-		if strings.Contains(low, "@patchloop fix") {
-			return w.fromIssue(ctx, &p, p.Issue.Title+"\n\n"+p.Issue.Body)
+		if m := commentCmdRe.FindStringSubmatch(p.Comment.Body); m != nil {
+			// `@patchloop fix` / `@patchloop do [type:feature] [text]`. The
+			// issue itself is the task unless the comment gives its own text.
+			taskType, text, err := ExtractTaskType(strings.TrimSpace(m[2]))
+			if err != nil {
+				return "ignored", nil
+			}
+			if taskType == "" {
+				taskType = labelTaskType(&p)
+			}
+			task := p.Issue.Title + "\n\n" + p.Issue.Body
+			if strings.EqualFold(m[1], "do") && text != "" {
+				task = text + "\n\nIssue #" + fmt.Sprint(p.Issue.Number) + ": " + p.Issue.Title + "\n\n" + p.Issue.Body
+			}
+			return w.fromIssue(ctx, &p, task, taskType)
 		}
 	}
 	return "ignored", nil
 }
 
 var mentionRe = regexp.MustCompile(`(?i)@patchloop`)
+
+// commentCmdRe matches `@patchloop fix|do [rest]` (rest runs to the end of the comment).
+var commentCmdRe = regexp.MustCompile(`(?is)@patchloop\s+(fix|do)\b(.*)`)
+
+// labelTaskType reads an optional `patchloop:<type>` label (feature, refactor,
+// ui, bugfix, tests ...) from the issue; "" when absent (planner decides).
+func labelTaskType(p *webhookPayload) string {
+	for _, l := range p.Issue.Labels {
+		name := strings.ToLower(strings.TrimSpace(l.Name))
+		if t, ok := strings.CutPrefix(name, "patchloop:"); ok && t != models.TaskTypeAuto && models.ValidTaskType(t) {
+			return t
+		}
+	}
+	return ""
+}
 
 // trustedAssociation limits comment triggers to people with write-ish access.
 func trustedAssociation(a string) bool {
@@ -145,7 +176,7 @@ func (w *GitHubWebhook) run(f func()) {
 	go f()
 }
 
-func (w *GitHubWebhook) fromIssue(ctx context.Context, p *webhookPayload, task string) (string, error) {
+func (w *GitHubWebhook) fromIssue(ctx context.Context, p *webhookPayload, task, taskType string) (string, error) {
 	userID, err := w.github.UserForInstallation(ctx, p.Installation.ID)
 	if err != nil || p.Repository.FullName == "" || p.Issue.Number == 0 {
 		return "ignored", nil
@@ -159,7 +190,7 @@ func (w *GitHubWebhook) fromIssue(ctx context.Context, p *webhookPayload, task s
 		c, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		run, err := w.runs.StartRepoRun(c, RepoRunInput{
-			UserID: userID, Repo: repo, Task: truncate(task, 4000), Source: models.SourceGitHub, AutoPR: true,
+			UserID: userID, Repo: repo, Task: truncate(task, 4000), Source: models.SourceGitHub, AutoPR: true, TaskType: taskType,
 			Issue: &models.IssueRef{Number: issue},
 		})
 		if err != nil {
