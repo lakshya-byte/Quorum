@@ -419,7 +419,7 @@ def make_ctx(files: dict[str, str], task: str, scripts: list[dict[str, Any]], tm
              task_type: str = "auto", events: list[tuple[str, dict[str, Any]]] | None = None, answers: dict[str, str] | None = None,
              strict: list[str] | None = None, limits: dict[str, Any] | None = None, **over: Any) -> SwarmCtx:
     sdir = tmp_path / "scripts"
-    sdir.mkdir(exist_ok=True)
+    sdir.mkdir(parents=True, exist_ok=True)
     for s in scripts:
         (sdir / f"{s['id']}.json").write_text(json.dumps(s), encoding="utf-8")
     fake = FakeSwarm(sdir, delay_scale=1.0)

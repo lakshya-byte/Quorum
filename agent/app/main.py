@@ -208,7 +208,7 @@ def build_router(registry: RunRegistry) -> APIRouter:
         from app.swarm.artifacts_api import artifact_meta, store_items
 
         run = require_run(run_id)
-        return [artifact_meta(a) for a in store_items(run.artifact_store)]
+        return [artifact_meta(a, run.artifact_store) for a in store_items(run.artifact_store)]
 
     @router.get("/runs/{run_id}/artifacts/{artifact_id}")
     async def get_artifact(run_id: str, artifact_id: str) -> Response:

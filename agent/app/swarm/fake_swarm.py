@@ -39,6 +39,59 @@ FAKE_QUESTIONS = [{"id": "scope", "text": "Which part of the repository should c
                   {"id": "done", "text": "How will we know it is done (a behaviour, a metric, a screen you expect to see)?"}]
 
 
+TYPE_WORDS = {
+    "ui": ["ui", "ux", "interface", "mobile", "responsive", "accessib", "design", "layout", "style"],
+    "refactor": ["refactor", "split", "extract", "restructure", "clean", "modular", "monolith"],
+    "feature": ["add", "feature", "support", "implement", "new "],
+}
+STOP = {"with", "that", "this", "from", "into", "must", "same", "keep", "which", "should", "every", "after", "afterwards",
+        "have", "than", "then", "their", "there", "where", "would", "about", "being", "while", "usable", "focused"}
+ASSET_PARAMS = ("files", "script")
+
+
+def demo_task_script(demo: Any, task: Any) -> dict[str, Any]:
+    """A script derived from builder B's bundled swarm demo task (`app/swarm/demo_tasks.py`): the plan mirrors the task's
+    criteria and reference units, the spec agents answer with the task's verification assets, and each unit's worker
+    replays the reference solution's files for that unit with write_file. Everything is executed for real afterwards."""
+    ref = task.reference
+    units_src = list(ref.units) or [{"id": "u1", "title": task.title, "files": sorted(ref.files)}]
+    criteria, spec = [], {}
+    for c in task.criteria:
+        params = dict(c.params)
+        assets = {k: params.pop(k) for k in ASSET_PARAMS if k in params}
+        if assets:
+            spec[c.id] = assets
+        criteria.append({"id": c.id, "kind": c.kind, "hard": c.hard, "description": c.description, "params": params,
+                         "user_stated": c.kind in ("acceptance_tests", "characterization", "ui_smoke", "complexity_metric")})
+    units, workers = [], {}
+    for u in units_src:
+        files = [f for f in u.get("files", []) if f in ref.files]
+        units.append({"id": u["id"], "title": u.get("title", u["id"]), "scope_files": list(u.get("files", [])),
+                      "depends_on": list(u.get("depends_on", [])), "variants": 1})
+        workers[u["id"]] = [{"variant": 0, "summary": u.get("title", ""), "steps": [
+            {"tool": "read_file", "args": {"path": f}} for f in files[:1]] + [
+            {"tool": "write_file", "args": {"path": f, "content": ref.files[f]}} for f in files]}]
+    words = re.findall(r"[a-z]{5,}", f"{task.title} {task.prompt}".lower())
+    kws = [w for w in dict.fromkeys(words) if w not in STOP][:12] + TYPE_WORDS.get(task.task_type, [])
+    return {"id": f"{demo.name}/{task.id}", "demo_task": True,
+            "match": {"repo": demo.name, "task_type": task.task_type, "keywords": kws},
+            "plan": {"task_type": task.task_type, "summary": task.title, "criteria": criteria, "units": units,
+                     "swarm": {"max_parallel": max(1, len(units))}},
+            "spec": spec, "workers": workers}
+
+
+def bundled_demo_scripts() -> list[dict[str, Any]]:
+    try:
+        from app.swarm.demo_tasks import load_swarm_demo, swarm_demo_names
+    except ImportError:  # builder B's demo loader is not present in this checkout
+        return []
+    out = []
+    for name in swarm_demo_names():
+        demo = load_swarm_demo(name)
+        out.extend(demo_task_script(demo, t) for t in demo.tasks.values())
+    return out
+
+
 def is_vague(task: str) -> bool:
     words = re.findall(r"\w+", task.lower())
     return len(words) < 3 or " ".join(words) in VAGUE
@@ -157,6 +210,8 @@ class FakeSwarm:
                     found.append(json.loads(path.read_text(encoding="utf-8")))
                 except (OSError, ValueError) as exc:
                     log.warning("fake script %s unreadable: %s", path.name, type(exc).__name__)
+            if self.dir == SCRIPTS_DIR:  # the bundled team also replays B's demo tasks (inventory-lib, react-notes)
+                found.extend(bundled_demo_scripts())
             self._scripts = found
         return self._scripts
 

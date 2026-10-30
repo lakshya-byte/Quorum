@@ -31,8 +31,21 @@ def store_items(store: Any) -> list[Any]:
         return []
 
 
-def _data(a: Any) -> bytes:
+def _data(a: Any, store: Any = None) -> bytes:
     raw = getattr(a, "data", None)
+    if raw is None and store is not None:
+        for name in ("bytes_of", "read"):  # builder B's ArtifactStore.bytes_of(id) / get(id) -> (Artifact, bytes)
+            fn = getattr(store, name, None)
+            if callable(fn):
+                try:
+                    raw = fn(a.id)
+                except Exception:
+                    raw = None
+                if raw is not None:
+                    break
+        if raw is None and callable(getattr(store, "get", None)):
+            got = store.get(a.id)
+            raw = got[1] if isinstance(got, (tuple, list)) and len(got) > 1 else getattr(got, "data", None)
     if raw is None and callable(getattr(a, "read", None)):
         raw = a.read()
     if isinstance(raw, str):
@@ -40,11 +53,11 @@ def _data(a: Any) -> bytes:
     return bytes(raw or b"")
 
 
-def artifact_meta(a: Any) -> dict[str, Any]:
+def artifact_meta(a: Any, store: Any = None) -> dict[str, Any]:
     size = getattr(a, "size", None)
     return {"id": str(a.id), "kind": getattr(a, "kind", "log"), "label": str(getattr(a, "label", ""))[:120],
             "phase": getattr(a, "phase", "n/a") or "n/a", "viewport": getattr(a, "viewport", None),
-            "mime": getattr(a, "mime", "text/plain"), "size": int(size if size is not None else len(_data(a)))}
+            "mime": getattr(a, "mime", "text/plain"), "size": int(size if size is not None else len(_data(a, store)))}
 
 
 def artifact_response(store: Any, artifact_id: str, secrets: list[str] | None = None) -> Response:
@@ -57,7 +70,7 @@ def artifact_response(store: Any, artifact_id: str, secrets: list[str] | None = 
     mime = str(getattr(a, "mime", "text/plain")).split(";")[0].strip().lower()
     if mime not in ALLOWED_MIME:
         raise HTTPException(415, "unsupported artifact type")
-    data = _data(a)
+    data = _data(a, store)
     if len(data) > MAX_ARTIFACT_BYTES:
         raise HTTPException(413, "artifact too large")
     if mime in TEXT_MIME:

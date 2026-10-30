@@ -262,14 +262,15 @@ async def make_plan(ctx: SwarmCtx, llm: ChatLLM, budget: Budget, limits: Limits,
 class SpecOut(BaseModel):
     files: dict[str, str] = {}
     command: str = ""
+    script: str = ""  # ui_smoke: `module.exports = async (page, baseUrl) => {...}` (throws on failure)
     steps: list[dict[str, Any]] = []
     note: str = ""
 
 
 def _spec_problem(kind: str, out: SpecOut, files: dict[str, str]) -> str:
     if kind == "ui_smoke":
-        if not out.steps and not out.files:
-            return "ui_smoke needs `steps` (or a script file)"
+        if not out.script and not out.steps and not out.files:
+            return "ui_smoke needs a `script`"
     elif not out.files:
         return "no test files were returned"
     for path, text in out.files.items():
@@ -301,7 +302,7 @@ async def synthesize_verifiers(ctx: SwarmCtx, plan: Plan, orig_ws: Any, baseline
     """Write + validate acceptance / characterization / smoke assets. Returns the protected (frozen) file paths."""
     frozen: set[str] = set()
     targets = [c for c in plan.criteria if c.kind in SYNTHESIZED_KINDS and c.hard and not c.params.get("files")
-               and not c.params.get("steps")]
+               and not c.params.get("steps") and not c.params.get("script")]
 
     async def one(c: CriterionSpec) -> None:
         llm = llm_for("spec", "super")
@@ -327,7 +328,8 @@ async def synthesize_verifiers(ctx: SwarmCtx, plan: Plan, orig_ws: Any, baseline
                 feedback = problem
                 continue
             probe = CriterionSpec(id=c.id, kind=c.kind, hard=True, description=c.description,
-                                  params={**c.params, "files": out.files, "command": out.command, "steps": out.steps})
+                                  params={**c.params, "files": out.files, "command": out.command, "steps": out.steps,
+                                              "script": out.script})
             fork = await orig_ws.fork()
             try:
                 res = await ctx.deps.run_verifier(ctx.deps.criterion(probe), fork, baseline, store)
@@ -347,7 +349,7 @@ async def synthesize_verifiers(ctx: SwarmCtx, plan: Plan, orig_ws: Any, baseline
                 break
             if status == expect:
                 c.params.update(probe.params)
-                c.params["validation"] = f"validated: {expect}s on the original code"
+                c.params["validation"] = f"validated: {'fails' if expect == 'fail' else 'passes'} on the original code"
                 frozen.update(out.files)
                 verdict = "ok"
                 break
@@ -363,7 +365,7 @@ async def synthesize_verifiers(ctx: SwarmCtx, plan: Plan, orig_ws: Any, baseline
         await hub.agent(agent_id, "spec", "failed", model=model, isolation=isolation, summary=c.downgraded)
 
     await asyncio.gather(*(one(c) for c in targets))
-    for c in plan.criteria:  # assets already present in the plan (e.g. scripted) are protected too
+    for c in plan.criteria:  # assets already present in the plan are protected too
         frozen.update((c.params.get("files") or {}).keys())
     return frozen
 

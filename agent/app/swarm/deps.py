@@ -15,6 +15,7 @@ What B's code must provide (contract section 6, plus the small conventions this 
 from __future__ import annotations
 
 import importlib
+import inspect
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,6 +36,17 @@ class SwarmDeps:
     def new_store(self) -> Any:
         return self.artifact_store_cls()
 
+    async def baseline(self, ws: Any, repo_map: Any, store: Any) -> Any:
+        """collect_baseline(ws, repo_map[, artifacts]): the artifact store is passed when the function accepts it
+        (before-screenshots then land in the run's gallery)."""
+        try:
+            accepts = "artifacts" in inspect.signature(self.collect_baseline).parameters
+        except (TypeError, ValueError):
+            accepts = False
+        if accepts:
+            return await self.collect_baseline(ws, repo_map, artifacts=store)
+        return await self.collect_baseline(ws, repo_map)
+
     def criterion(self, spec: Any) -> Any:
         return self.criterion_cls(id=spec.id, kind=spec.verifier or spec.kind, hard=bool(spec.hard),
                                   description=spec.description, params=dict(spec.params))
@@ -46,6 +58,17 @@ def _import(name: str) -> Any:
     except ImportError as exc:
         raise SwarmDepsError(f"swarm dependency {name!r} is not available ({exc}). The sandbox workspace and verifier "
                              f"modules are required for non-bugfix tasks.") from None
+
+
+def _construct(cls: Any, **candidates: Any) -> Any:
+    """Instantiate `cls` passing only the keyword arguments its __init__ declares."""
+    try:
+        params = inspect.signature(cls).parameters
+    except (TypeError, ValueError):
+        return cls()
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return cls(**candidates)
+    return cls(**{k: v for k, v in candidates.items() if k in params})
 
 
 def _first(obj: Any, *names: str) -> Any:
@@ -67,10 +90,8 @@ def load_deps(mode: str, settings: Any, *, demo: bool) -> SwarmDeps:
                      "LocalWorkspaceFactory")
         if cls is None:
             raise SwarmDepsError("app.swarm.workspace has no get_factory()/make_factory()/WorkspaceFactory class")
-        try:
-            factory = cls(settings) if mode == "live" else cls()
-        except TypeError:
-            factory = cls()
+        factory = _construct(cls, settings=settings, demo=demo or None, allow_non_demo=allow_local,
+                             concurrency=int(getattr(settings, "sandbox_concurrency", 8)))
     repo_map = _first(ver, "build_repo_map")
     store = _first(ver, "ArtifactStore")
     if repo_map is None:

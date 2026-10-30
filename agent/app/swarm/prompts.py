@@ -56,8 +56,9 @@ Reply with ONE ```json object: {{"files": {{"path": "full file content"}}, "comm
   (never overwrite an existing file); place them under the test directory.
 - characterization: tests pinning the CURRENT observable behaviour of the code being refactored (public functions,
   edge cases, return values). They must PASS on the current code and keep passing after a behaviour-preserving refactor.
-- ui_smoke: "steps" is a list of {{"action":"goto|click|fill|expect_text|expect_visible","selector":"...","value":"...",
-  "text":"..."}} describing the key user flow of the app AS IT WORKS TODAY; it must pass before and after the change.
+- ui_smoke: "script" is a Playwright module: `module.exports = async function smoke(page, baseUrl) {{ await page.goto(baseUrl);
+  ... }}` that throws on failure. It exercises the key user flow of the app AS IT WORKS TODAY (use stable text/role
+  selectors that survive a restyle) and must pass before and after the change.
 Keep it small and deterministic: no network, no sleeps, no randomness."""
 
 

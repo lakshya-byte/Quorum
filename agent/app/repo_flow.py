@@ -463,6 +463,7 @@ async def open_run_pr(reg: Any, run: Any, token: str) -> dict[str, Any]:
         title = ((draft or {}).get("title") or f"fix: {run.task.strip().splitlines()[0][:100]}")[:200]
         if swarm_run:
             title = f"{PR_PREFIX.get(run.task_type, 'chore')}: {run.task.strip().splitlines()[0][:100]}"[:200]
+        title = redact(title, token)
 
         async def body(include_untrusted: bool) -> str:
             if swarm_run:
@@ -471,10 +472,10 @@ async def open_run_pr(reg: Any, run: Any, token: str) -> dict[str, Any]:
             return repo_pr_body(shim, best, cause=run.cause, draft=draft, label=label, run_url=run.run_url,
                                 issue_ref=run.issue_ref, safety=safety, include_untrusted=include_untrusted)
 
-        text = await body(True)
+        text = redact(await body(True), token)
         verdict = await reg.guard.check("output", f"{title}\n\n{text}", run.mode, run.run_id)
         if verdict["verdict"] != "pass":  # fall back to the deterministic template without task/model text
-            title, text = f"{PR_PREFIX.get(run.task_type, 'fix') if swarm_run else 'fix'}: automated change", await body(False)
+            title, text = f"{PR_PREFIX.get(run.task_type, 'fix') if swarm_run else 'fix'}: automated change", redact(await body(False), token)
         commits = swarm_commits(run) if swarm_run else []
         if run.demo:
             info = fake_pr(run.repo, run.task, run.run_id, followup)

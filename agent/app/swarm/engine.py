@@ -213,16 +213,14 @@ class RunState:
         self.repo_map = await asyncio.to_thread(d.build_repo_map, ctx.files)
 
         async def baseline() -> Any:
-            fork = await self.orig_ws.fork()
+            # on the ORIGINAL workspace itself: dependency installs done here are inherited by every later fork
             try:
-                return await d.collect_baseline(fork, self.repo_map)
+                return await d.baseline(self.orig_ws, self.repo_map, self.store)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 log.warning("baseline failed: %s", type(exc).__name__)
                 return None
-            finally:
-                await fork.release()
 
         async def plan() -> Plan:
             if ctx.plan is not None:
@@ -326,8 +324,12 @@ class RunState:
     async def _verify_one(self, c: CriterionSpec) -> VerifyRow:
         assert self.cur_ws is not None
         fork = await self.cur_ws.fork()
+        spec = c
+        if c.kind == "policy":  # builder B's policy verifier reads these params
+            spec = c.model_copy(update={"params": {**c.params, "task_type": self.plan.task_type if self.plan else "",
+                                                   "spec_files": sorted(self.spec_files)}})
         try:
-            res = await self.deps.run_verifier(self.deps.criterion(c), fork, self.baseline, self.store)
+            res = await self.deps.run_verifier(self.deps.criterion(spec), fork, self.baseline, self.store)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -351,6 +353,8 @@ class RunState:
             detail = f"{note}: {detail}"
         elif not c.hard and status == "advisory":
             pass
+        if status == "skip" and c.hard and detail.startswith("verifier error"):
+            status = "fail"  # a crashed verifier is never mistaken for a pass
         if status not in ("pass", "fail", "skip", "advisory"):
             status = "fail" if c.hard else "skip"
         return VerifyRow(c.id, c.kind, c.hard, status, score, detail, arts)

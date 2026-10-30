@@ -47,6 +47,7 @@ class Runtime:
 async def apply_changes(ws: Any, changes: dict[str, str | None]) -> list[str]:
     """Write `changes` into a workspace. Returns the paths that could not be applied (deletions without ws.delete)."""
     skipped: list[str] = []
+    write = getattr(ws, "put_trusted", None) or ws.write  # harness writes bypass the per-unit scope hooks
     for path, text in changes.items():
         if text is None:
             delete = getattr(ws, "delete", None)
@@ -55,7 +56,7 @@ async def apply_changes(ws: Any, changes: dict[str, str | None]) -> list[str]:
             else:
                 await delete(path)
         else:
-            await ws.write(path, text)
+            await write(path, text)
     return skipped
 
 
