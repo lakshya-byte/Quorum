@@ -32,6 +32,7 @@ export type CriteriaSummary = {
   hardPass?: number | boolean;
   hardTotal?: number;
   advisory?: unknown[];
+  unverified?: string[];
   results?: VerifyResultRow[];
 };
 export type ArtifactMeta = { id: string; kind: "screenshot" | "log" | "report" | "diff" | string; label: string; phase: "before" | "after" | "n/a" | string; viewport?: number | string | null; mime: string; size?: number };

@@ -24,7 +24,7 @@ export type DoneEvent = {
   /** v3 */
   outcome?: Outcome;
   task_type?: string;
-  criteria?: { hard_pass?: number | boolean; hard_total?: number; advisory?: unknown[] };
+  criteria?: { hard_pass?: number | boolean; hard_total?: number; advisory?: unknown[]; unverified?: string[] };
   agents?: { spawned?: number; peak_parallel?: number };
 };
 
@@ -198,6 +198,7 @@ export function runReducer(s: RunState, a: RunAction): RunState {
           latency_ms: r.latencyMs ?? undefined,
           ...(r.outcome ? { outcome: r.outcome } : {}),
           ...(r.taskType ? { task_type: r.taskType } : {}),
+          ...(r.criteriaSummary ? { criteria: r.criteriaSummary as DoneEvent["criteria"] } : {}),
           ...(r.agentsSpawned != null ? { agents: { spawned: r.agentsSpawned, peak_parallel: r.peakParallel ?? undefined } } : {}),
         };
         if (r.outcome === "needs_input") next.errors = [];
@@ -246,8 +247,12 @@ export function runReducer(s: RunState, a: RunAction): RunState {
           if (prev.includes(lesson)) return base;
           return { ...base, lessons: { ...base.lessons, [id]: [...prev, lesson] } };
         }
-        case "done":
-          return { ...base, done: { ...(d as unknown as DoneEvent), best: bestNodeId(d.best) }, endedAt: base.endedAt ?? a.at };
+        case "done": {
+          // v3: done.best is the combined result node (files + diff); keep it so the diff viewer can show it
+          const bn = d.best && typeof d.best === "object" ? (d.best as RunNode) : null;
+          const withBest = bn && typeof bn.id === "number" && !base.nodes[bn.id] ? addNode(base, bn) : base;
+          return { ...withBest, done: { ...(d as unknown as DoneEvent), best: bestNodeId(d.best) }, endedAt: withBest.endedAt ?? a.at };
+        }
         case "repo":
           return { ...base, repo: d as unknown as RepoEvent };
         case "locate":

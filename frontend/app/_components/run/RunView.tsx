@@ -5,37 +5,17 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { Bug, Run } from "../../_lib/api";
 import { changedFileCount } from "../../_lib/unified";
 import { isRepoRun, totalTokens, type GuardStage, type RunState } from "../../_lib/runState";
+import { isSwarmState } from "../../_lib/swarm";
+import SwarmView from "./swarm/SwarmView";
 import { Badge, Card, ErrorNote, Icon, StatusChip, cx, type RunStatus } from "../../_ui";
 import AttemptTree from "./AttemptTree";
 import NodePanel from "./NodePanel";
 import { fmtMs } from "./NodeCard";
 import Pipeline from "./Pipeline";
 import PrCard from "./PrCard";
+import { LiveTimer, Stat } from "./common";
 
 const GUARD_LABEL: Record<GuardStage, string> = { input: "Input guard", policy: "Policy gate", output: "Output guard" };
-
-function LiveTimer({ startedAt, endedAt, finalMs }: { startedAt: number | null; endedAt: number | null; finalMs?: number }) {
-  const [now, setNow] = useState(() => (typeof performance !== "undefined" ? performance.now() : 0));
-  const running = startedAt != null && endedAt == null && finalMs == null;
-  useEffect(() => {
-    if (!running) return;
-    const t = setInterval(() => setNow(performance.now()), 200);
-    return () => clearInterval(t);
-  }, [running]);
-  let ms: number | null = null;
-  if (finalMs != null) ms = finalMs;
-  else if (startedAt != null) ms = (endedAt ?? now) - startedAt;
-  return <span className="tabular-nums">{ms == null ? "–" : `${(Math.max(0, ms) / 1000).toFixed(1)}s`}</span>;
-}
-
-function Stat({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex min-w-0 flex-col gap-0.5">
-      <span className="text-[11.5px] text-on-surface-variant">{label}</span>
-      <span className="text-[15px] font-semibold tabular-nums text-white">{children}</span>
-    </div>
-  );
-}
 
 export function runChip(state: RunState): { status: RunStatus; label?: string } {
   const { status, done, blocked } = state;
@@ -83,6 +63,8 @@ export type RunViewProps = {
 
 export default function RunView({ state, bug, run, solvedActions, onRetry, notice, slackConfigured = null, slackSent = null }: RunViewProps) {
   const [selected, setSelected] = useState<number | null>(null);
+  // Hooks above must run for both views; the swarm view takes over for non-bugfix plans and any run with agents.
+  const swarm = isSwarmState(state) || (!!run?.plan && run.plan.task_type !== "bugfix");
   const onSelect = useCallback((id: number) => setSelected(id), []);
   const onClose = useCallback(() => setSelected(null), []);
 
@@ -99,6 +81,8 @@ export default function RunView({ state, bug, run, solvedActions, onRetry, notic
   const chip = runChip(state);
   const finished = state.status === "finished" || !!done;
   const filesChanged = best?.files ? changedFileCount(best) : run?.filesChanged || null;
+
+  if (swarm) return <SwarmView state={state} run={run} notice={notice} onRetry={onRetry} slackConfigured={slackConfigured} slackSent={slackSent} />;
 
   return (
     <div className="flex flex-col gap-5">

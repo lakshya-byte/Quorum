@@ -53,7 +53,7 @@ function SharedDefs() {
 export function SystemMap() {
   return (
     <>
-      <svg viewBox="0 0 900 330" role="img" aria-label="System map: you start a fix from the website, CLI, Slack or GitHub. PatchLoop reads your repo, calls Nebius models and sandboxes, opens a pull request on GitHub and messages Slack. You review and merge." className="hidden h-auto w-full md:block">
+      <svg viewBox="0 0 900 330" role="img" aria-label="System map: you start a fix from the website, CLI, Slack or GitHub. PatchLoop reads your repo, spawns a swarm that calls Nebius models and sandboxes, opens a pull request on GitHub and messages Slack. You review and merge." className="hidden h-auto w-full md:block">
         <title>PatchLoop system map</title>
         <desc>Four entry points feed PatchLoop. PatchLoop talks to GitHub, Nebius and Slack. Agents never merge; a human does.</desc>
         <SharedDefs />
@@ -74,10 +74,10 @@ export function SystemMap() {
           API and live run view
         </text>
         <text x={425} y={177} textAnchor="middle" className={T2}>
-          agent team: locate, reproduce,
+          swarm: planner, spec agents, workers,
         </text>
         <text x={425} y={195} textAnchor="middle" className={T2}>
-          propose, test, critique, review
+          integrator, verifiers, reviewer
         </text>
         <text x={425} y={231} textAnchor="middle" className="fill-[var(--on-surface)] text-[12px] font-semibold">
           has no merge function
@@ -110,10 +110,10 @@ export function SystemMap() {
           PatchLoop
         </text>
         <text x={170} y={152} textAnchor="middle" className={T2}>
-          agent team: locate, reproduce, propose,
+          swarm: planner, spec agents, workers,
         </text>
         <text x={170} y={170} textAnchor="middle" className={T2}>
-          test, critique, review
+          integrator, verifiers, reviewer
         </text>
         <text x={170} y={194} textAnchor="middle" className="fill-[var(--on-surface)] text-[12px] font-semibold">
           has no merge function
@@ -138,21 +138,21 @@ export function SystemMap() {
 }
 
 const COLS: { x: number; head: string; boxes: { t: string; s: string; k?: Kind }[] }[] = [
-  { x: 20, head: "PREPARE", boxes: [{ t: "Input guard", s: "checks the task text" }, { t: "Triage and locate", s: "likely cause, files" }, { t: "Test writer", s: "failing reproducer" }] },
-  { x: 200, head: "PROPOSE, IN PARALLEL", boxes: [{ t: "Fix A", s: "strategy 1", k: "info" }, { t: "Fix B", s: "strategy 2", k: "info" }, { t: "Fix C", s: "strategy 3", k: "info" }] },
-  { x: 380, head: "CHECK EACH CANDIDATE", boxes: [{ t: "Policy gate", s: "files, imports" }, { t: "Sandbox tests", s: "reproducer and suite", k: "accent" }, { t: "Security scan", s: "new findings?" }] },
-  { x: 560, head: "DECIDE", boxes: [{ t: "Score", s: "passes, diff size" }, { t: "First pass wins", s: "cancels the rest", k: "accent" }, { t: "Critic", s: "if none pass" }] },
+  { x: 20, head: "PLAN", boxes: [{ t: "Input guard", s: "checks the task text" }, { t: "Repo map", s: "tree, symbols, tests" }, { t: "Planner", s: "type, criteria, units" }] },
+  { x: 200, head: "SPEC AGENTS", boxes: [{ t: "Baseline", s: "build and tests, original" }, { t: "Write checks", s: "tests, UI scripts" }, { t: "Validate", s: "must run, fail first", k: "accent" }] },
+  { x: 380, head: "WORKERS, IN PARALLEL", boxes: [{ t: "Worker A", s: "sandbox fork", k: "info" }, { t: "Worker B", s: "sandbox fork", k: "info" }, { t: "Worker C", s: "other unit", k: "info" }] },
+  { x: 560, head: "COMBINE AND CHECK", boxes: [{ t: "Integrator", s: "merges unit diffs" }, { t: "Verifiers", s: "plain code, not an LLM", k: "accent" }, { t: "Critic", s: "repair units if a gate fails" }] },
   { x: 740, head: "SHIP", boxes: [{ t: "Reviewer", s: "drafts the PR text" }, { t: "Output guard", s: "checks the PR text" }, { t: "Pull request", s: "a human merges", k: "accent" }] },
 ];
 
-/** Diagram 2: the agent team. */
+/** Diagram 2: the swarm. */
 export function AgentTeam() {
   const Y = [44, 124, 204];
   return (
     <>
-      <svg viewBox="0 0 900 340" role="img" aria-label="Agent team: input guard, triage and locator, test writer; three parallel proposers; policy gate, sandbox tests and security scan on each candidate; score, first pass wins, critic feeding the next round; reviewer, output guard and pull request." className="hidden h-auto w-full md:block">
-        <title>PatchLoop agent team</title>
-        <desc>Guard, triage, locator and test writer prepare the run. Three proposers work in parallel; each candidate passes a policy gate, sandbox tests and a security scan. The first passing candidate wins; otherwise the critic feeds the next round. A reviewer and output guard precede the pull request, which a human merges.</desc>
+      <svg viewBox="0 0 900 340" role="img" aria-label="Swarm: input guard, repo map and planner; spec agents write and validate the checks; workers run in parallel in sandbox forks; an integrator merges their diffs, deterministic verifiers run every check and a critic writes repair units if a hard gate fails; then a reviewer, output guard and a pull request that a human merges." className="hidden h-auto w-full md:block">
+        <title>PatchLoop swarm</title>
+        <desc>A guard, a repo map and a planner prepare the run. Spec agents write the checks and validate them on the original code. Workers run in parallel in sandbox forks. An integrator merges unit diffs, deterministic verifiers run every check, and a critic writes repair units when a hard gate fails. A reviewer and output guard precede the pull request, which a human merges.</desc>
         <SharedDefs />
         {COLS.map((c) => (
           <g key={c.head}>
@@ -173,22 +173,21 @@ export function AgentTeam() {
         {/* loop back: critic -> proposers */}
         <path d="M630 260 L 630 296 L 270 296 L 270 264" fill="none" stroke="var(--warning)" strokeWidth={1.6} className="flow-line" markerEnd="url(#arrow-warn)" />
         <text x={450} y={316} textAnchor="middle" className="fill-[var(--warning)] text-[12px] font-medium">
-          nothing passed: the critic hands lessons to the next round
+          a hard gate failed: the critic writes repair units for the next round
         </text>
       </svg>
 
-      <ol className="grid gap-2 md:hidden" aria-label="Agent team steps">
+      <ol className="grid gap-2 md:hidden" aria-label="Swarm steps">
         {[
           ["Input guard", "checks the task text before anything runs"],
-          ["Triage and locate", "finds the likely cause and the files that matter"],
-          ["Test writer", "writes a reproducer that must fail on the original code"],
-          ["Three proposers", "try different strategies in parallel"],
-          ["Policy gate", "blocks candidates that touch CI, secrets or tests"],
-          ["Sandbox tests", "each candidate runs in an isolated sandbox"],
-          ["Security scan", "flags new findings"],
-          ["Score and critic", "first candidate to pass wins, otherwise the next round starts"],
+          ["Repo map and planner", "code builds a map; the planner picks the task type, the checks and the units"],
+          ["Spec agents", "write tests or UI scripts and validate them on the original code"],
+          ["Parallel workers", "each unit variant runs in its own sandbox fork; the first to pass wins"],
+          ["Integrator", "merges the unit diffs and resolves conflicts"],
+          ["Verifiers", "plain code runs every hard gate and advisory check"],
+          ["Critic", "if a hard gate fails, writes repair units for the next round"],
           ["Reviewer and output guard", "draft and check the pull request text"],
-          ["Pull request", "opened on a patchloop/ branch; a human merges"],
+          ["Pull request", "one commit per unit on a patchloop/ branch; a human merges"],
         ].map(([t, s], i) => (
           <li key={t} className="flex gap-3 rounded-lg border border-border bg-surface-container-low px-3.5 py-3">
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border-strong text-[12px] font-semibold text-primary">{i + 1}</span>

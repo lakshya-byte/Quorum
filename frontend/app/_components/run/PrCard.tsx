@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { errorMessage, prApi, type PrInfo } from "../../_lib/api";
+import { errorMessage, prApi, type Outcome, type PrInfo } from "../../_lib/api";
 import type { PrEvent } from "../../_lib/runState";
 import { Badge, Button, Card, ErrorNote, Icon, LinkButton, Textarea, useToast, type Tone } from "../../_ui";
 
@@ -13,7 +13,7 @@ const CHECK_TONE: Record<string, { tone: Tone; label: string }> = {
   none: { tone: "neutral", label: "No CI configured" },
 };
 
-export default function PrCard({ runId, pr, repo, onFollowup }: { runId: string; pr: PrEvent; repo?: string; onFollowup?: (newRunId: string) => void }) {
+export default function PrCard({ runId, pr, repo, onFollowup, outcome, unverified }: { runId: string; pr: PrEvent; repo?: string; onFollowup?: (newRunId: string) => void; outcome?: Outcome | null; unverified?: string[] }) {
   const router = useRouter();
   const { toast } = useToast();
   const [info, setInfo] = useState<PrInfo | null>(null);
@@ -101,6 +101,9 @@ export default function PrCard({ runId, pr, repo, onFollowup }: { runId: string;
                   {merged ? "Pull request merged" : pr.updated ? "Pull request updated" : "Pull request ready for review"}
                 </h3>
                 {pr.fake && <Badge tone="warning" title="Demo mode: no real pull request exists">demo PR</Badge>}
+                {outcome === "partial" && <Badge tone="warning" icon="alert">Partial</Badge>}
+                {outcome === "complete" && <Badge tone="success" icon="check-circle">Complete</Badge>}
+                {pr.commits ? <Badge title="One commit per unit, so you can review incrementally">{pr.commits} commits</Badge> : null}
               </div>
               <p className="mt-0.5 truncate font-mono text-[12.5px] text-on-surface-variant">
                 {repo ? `${repo} ` : ""}
@@ -125,6 +128,14 @@ export default function PrCard({ runId, pr, repo, onFollowup }: { runId: string;
           </ErrorNote>
         )}
         {warning && <ErrorNote tone="warning">{warning}</ErrorNote>}
+        {outcome === "partial" && !merged && (
+          <ErrorNote tone="warning">
+            <span data-testid="partial-warning">
+              This result is partial: every hard gate passed, but not everything you asked for could be proven by a check.
+              {unverified && unverified.length > 0 ? ` Not verified: ${unverified.join(" ")}` : ""} Read the diff before you merge.
+            </span>
+          </ErrorNote>
+        )}
 
         {merged ? (
           <p className="text-[13.5px] text-on-surface-variant" data-testid="merged-note">
@@ -149,7 +160,9 @@ export default function PrCard({ runId, pr, repo, onFollowup }: { runId: string;
                 </Button>
               ) : (
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-1.5">
-                  <span className="text-[13px] text-on-surface">Squash and merge #{number} as you?</span>
+                  <span className="text-[13px] text-on-surface">
+                    Squash and merge #{number} as you?{outcome === "partial" ? " It is a partial result." : ""}
+                  </span>
                   <Button size="sm" onClick={doMerge} loading={merging} data-testid="merge-confirm">
                     Confirm merge
                   </Button>
