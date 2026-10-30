@@ -17,7 +17,12 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import { BUGS, getBug, publicBug } from "./bugs.mjs";
-import { DEMO_REPOS, repoByName, candidateFiles, candidateDiff } from "./repos.mjs";
+import { DEMO_REPOS, repoByName as demoRepoByName, candidateFiles, candidateDiff } from "./repos.mjs";
+import { UI_REPO, buildSwarm, classify } from "./swarm.mjs";
+
+// The mock offers one extra repo (a React app) so UI tasks have something to work on.
+const ALL_REPOS = [...DEMO_REPOS, UI_REPO];
+const repoByName = (n) => demoRepoByName(n) || ALL_REPOS.find((r) => r.fullName === n);
 
 const PORT = Number(process.env.MOCK_PORT || 8080);
 const ORIGINS = (process.env.FRONTEND_ORIGIN || "http://localhost:3000")
@@ -110,6 +115,7 @@ function issueSession(res, userId) {
   accessTokens.set(access, { userId, exp: Date.now() + ACCESS_TTL * 1000 });
   refreshTokens.set(refresh, { userId, exp: Date.now() + REFRESH_TTL * 1000 });
   res.setHeader("Set-Cookie", [cookie(ACCESS_COOKIE, access, ACCESS_TTL), cookie(REFRESH_COOKIE, refresh, REFRESH_TTL)]);
+  return access;
 }
 
 function clearSession(res) {
@@ -118,10 +124,16 @@ function clearSession(res) {
 
 /** Resolve the caller: access cookie OR "Authorization: Bearer plk_...". */
 function authUser(req) {
-  const h = req.headers.authorization || "";
+  let h = req.headers.authorization || "";
+  const qt = new URL(req.url, "http://x").searchParams.get("token");
+  if (!h && qt) h = `Bearer ${qt}`;
   if (h.startsWith("Bearer ")) {
     const raw = h.slice(7).trim();
-    if (!raw.startsWith("plk_")) return null;
+    if (!raw.startsWith("plk_")) {
+      // frontend built with NEXT_PUBLIC_MOCK_AUTH=1: the session token returned by verify-otp
+      const sess = accessTokens.get(raw);
+      return sess && sess.exp > Date.now() ? usersById.get(sess.userId) || null : null;
+    }
     const hash = sha(raw);
     for (const t of apiTokens.values()) {
       if (t.hash === hash) {
@@ -530,6 +542,55 @@ function createRepoRun({ repo, branch, task, userId, autoPr = true, parent, foll
   return run;
 }
 
+function createSwarmRun({ repo, branch, task, userId, autoPr = true, strict, limits, answers, parent, followup, kind, cls }) {
+  const id = rid(12);
+  const prNumber = parent?.prNumber ?? ++prCounter;
+  const run = {
+    id, userId, bugId: "", agentRunId: "ag_" + rid(6), mode: "fake", engine: "swarm", status: "running", solved: false, bestNodeId: null, nodes: [],
+    usage: { prompt_tokens: 0, completion_tokens: 0 }, latencyMs: null, prUrl: parent?.prUrl || null, createdAt: now(), completedAt: null, kind: "repo",
+    repo: repo.fullName, branch, task, autoPr, source: "web", prNumber: parent?.prNumber ?? null, prBranch: parent?.prBranch ?? null, parentRunId: parent?.id ?? null,
+    filesChanged: null, merged: null, cost: { tokens: 0, usd: null },
+    safety: { guard: { input: "pass", output: "pass" }, policy: { best_ok: true, blocked: 0, candidates: 1 }, security: { best_ok: true, blocked: 0, scanned: true, scanner: "bandit" } },
+    traceId: "tr_" + rid(6), langsmithUrl: null, pr: parent?.pr ?? null, taskType: cls.type, strict: strict || [], limits: limits || {}, answers: answers || null, artifacts: [],
+    events: [], listeners: new Set(), finished: false, dropped: false,
+  };
+  runs.set(id, run);
+  const built = buildSwarm(followup ? "followup" : kind, { repo, branch, task, autoPr, type: cls.type, source: cls.source, strict: strict || [], prNumber, followup, prUrl: parent?.prUrl, prBranch: parent?.prBranch });
+  run.artifactBlobs = new Map(built.artifacts.map((a) => [a.meta.id, a]));
+  const planEv = built.events.find((e) => e.type === "plan");
+  if (planEv) planEv.data = { ...planEv.data, swarm: { ...planEv.data.swarm, limits: { ...planEv.data.swarm.limits, ...clampLimits(limits) } } };
+  for (const e of built.events) {
+    setTimeout(() => {
+      if (e.type === "run_started") e.data = { ...e.data, run_id: id };
+      if (e.type === "pr") {
+        run.pr = run.pr ? { ...run.pr } : { url: e.data.url, number: e.data.number, branch: e.data.branch, createdAt: Date.now() };
+        run.prNumber = e.data.number;
+        run.prBranch = e.data.branch;
+        addNote(userId, "pr", parent ? "Pull request updated" : "Pull request opened", `${repo.fullName} #${e.data.number} is ready for review`, id);
+      }
+      if (e.type === "done") {
+        run.cost = { tokens: (e.data.usage.prompt_tokens || 0) + (e.data.usage.completion_tokens || 0), usd: null };
+        if (e.data.outcome === "needs_input") addNote(userId, "run", "PatchLoop needs your input", `${repo.fullName}: answer 2 questions to continue`, id);
+      }
+      if (e.type === "end" && slackHooks.has(run.userId) && run.pr) setTimeout(() => (run.slackSent = true), 400 * SPEED);
+      emit(run, e.type, e.data);
+    }, Math.round(e.at * SPEED));
+  }
+  return run;
+}
+
+function clampLimits(l) {
+  const o = {};
+  if (l && typeof l === "object") {
+    if (Number.isFinite(l.max_workers)) o.max_workers = Math.max(1, Math.min(8, Math.floor(l.max_workers)));
+    if (Number.isFinite(l.max_tokens)) o.max_tokens = Math.max(10000, Math.min(2000000, Math.floor(l.max_tokens)));
+    if (Number.isFinite(l.max_wall_s)) o.max_wall_s = Math.max(30, Math.min(3600, Math.floor(l.max_wall_s)));
+  }
+  return o;
+}
+
+const TASK_TYPES = ["auto", "bugfix", "feature", "refactor", "ui", "tests", "perf", "deps", "docs", "migration", "other"];
+
 function addNote(userId, kind, title, body, runId) {
   notifications.unshift({ id: rid(6), userId, kind, title, body, runId, read: false, createdAt: now() });
 }
@@ -572,9 +633,20 @@ function createRun({ bug, engine, mode, userId, guest }) {
 function emit(run, type, data) {
   if (run.finished) return;
   if (type === "node") run.nodes.push(data);
+  if (type === "plan") run.plan = data;
+  if (type === "verify") run.lastVerify = data.results;
+  if (type === "artifact") run.artifacts = [...(run.artifacts || []), data];
+  if (type === "done" && data.outcome) {
+    run.outcome = data.outcome;
+    run.taskType = data.task_type || run.taskType;
+    run.agentsSpawned = data.agents?.spawned ?? null;
+    run.peakParallel = data.agents?.peak_parallel ?? null;
+    run.criteriaSummary = { ...(data.criteria || {}), results: run.lastVerify || [] };
+    if (data.best && typeof data.best === "object") run.nodes.push(data.best);
+  }
   if (type === "done") {
     run.solved = !!data.solved;
-    run.bestNodeId = data.best ?? null;
+    run.bestNodeId = data.best && typeof data.best === "object" ? data.best.id : (data.best ?? null);
     run.usage = data.usage;
     run.latencyMs = data.latency_ms ?? null;
     run.completedAt = now();
@@ -623,7 +695,7 @@ function streamRun(req, res, run) {
   req.on("close", cleanup);
 }
 
-const RUN_FIELDS = ["id", "userId", "bugId", "agentRunId", "mode", "engine", "status", "solved", "bestNodeId", "nodes", "usage", "latencyMs", "prUrl", "createdAt", "completedAt", "kind", "repo", "branch", "task", "source", "prNumber", "prBranch", "parentRunId", "filesChanged", "merged", "cost", "safety", "traceId", "langsmithUrl", "slackSent"];
+const RUN_FIELDS = ["id", "userId", "bugId", "agentRunId", "mode", "engine", "status", "solved", "bestNodeId", "nodes", "usage", "latencyMs", "prUrl", "createdAt", "completedAt", "kind", "repo", "branch", "task", "source", "prNumber", "prBranch", "parentRunId", "filesChanged", "merged", "cost", "safety", "traceId", "langsmithUrl", "slackSent", "taskType", "outcome", "plan", "criteriaSummary", "agentsSpawned", "peakParallel", "artifacts"];
 const publicRun = (r) => Object.fromEntries(RUN_FIELDS.map((k) => [k, r[k] === undefined ? null : r[k]]).map(([k, v]) => [k, k === "kind" && v === null ? "bug" : k === "slackSent" ? !!v : v]));
 
 function maskHook(u) {
@@ -665,8 +737,8 @@ async function handle(req, res) {
     if (!u) return err(res, 404, "user not found");
     if (b.code !== "123456") return err(res, 400, "invalid verification code");
     u.verified = true;
-    issueSession(res, u.id);
-    return json(res, 200, { user: userResponse(u) });
+    const token = issueSession(res, u.id);
+    return json(res, 200, { user: userResponse(u), token });
   }
   if (m === "POST" && p === "/api/auth/resend-otp") {
     const b = await readBody(req);
@@ -760,7 +832,7 @@ async function handle(req, res) {
     avatarUrl: null,
     installationId: gh?.installationId ?? null,
     appConfigured: process.env.MOCK_GITHUB_APP === "1",
-    repoCount: gh ? DEMO_REPOS.length : 0,
+    repoCount: gh ? ALL_REPOS.length : 0,
   });
   if (m === "GET" && p === "/api/github/status") return json(res, 200, ghStatus());
   if (m === "GET" && p === "/api/github/connect") {
@@ -771,7 +843,7 @@ async function handle(req, res) {
   }
   if (m === "POST" && p === "/api/github/demo") {
     github.set(user.id, { mode: "demo", login: "demo-user", installationId: null });
-    return json(res, 200, { ...ghStatus(), connected: true, mode: "demo", login: "demo-user", repoCount: DEMO_REPOS.length });
+    return json(res, 200, { ...ghStatus(), connected: true, mode: "demo", login: "demo-user", repoCount: ALL_REPOS.length });
   }
   if (m === "DELETE" && p === "/api/github") {
     github.delete(user.id);
@@ -783,7 +855,7 @@ async function handle(req, res) {
     return json(
       res,
       200,
-      DEMO_REPOS.filter((r) => r.fullName.includes(q) || r.description.toLowerCase().includes(q)).map((r, i) => ({
+      ALL_REPOS.filter((r) => r.fullName.includes(q) || r.description.toLowerCase().includes(q)).map((r, i) => ({
         fullName: r.fullName,
         private: false,
         defaultBranch: "main",
@@ -848,7 +920,19 @@ async function handle(req, res) {
     if (hits.length >= 10) return err(res, 429, "Task limit reached (10 per hour).");
     hits.push(Date.now());
     taskHits.set(user.id, hits);
-    const run = createRepoRun({ repo, branch: b.branch || "main", task, userId: user.id, autoPr: b.autoPr !== false });
+    const taskType = b.taskType === undefined ? "auto" : b.taskType;
+    if (!TASK_TYPES.includes(taskType)) return err(res, 400, `taskType must be one of ${TASK_TYPES.join(", ")}`);
+    const strict = Array.isArray(b.strict) ? b.strict.filter((x) => typeof x === "string").slice(0, 20) : [];
+    const limits = clampLimits(b.limits);
+    const cls = classify(task, taskType, false);
+    const autoPr = b.autoPr !== false;
+    // The classic path (bug fixes on the bundled Python repos) keeps the original scripted stream.
+    if (cls.kind === "bugfix" && demoRepoByName(repo.fullName)) {
+      const run = createRepoRun({ repo, branch: b.branch || "main", task, userId: user.id, autoPr });
+      run.taskType = "bugfix";
+      return json(res, 201, { runId: run.id });
+    }
+    const run = createSwarmRun({ repo, branch: b.branch || "main", task, userId: user.id, autoPr, strict, limits, kind: cls.kind === "bugfix" ? "partial" : cls.kind, cls });
     return json(res, 201, { runId: run.id });
   }
 
@@ -871,6 +955,33 @@ async function handle(req, res) {
   if (m === "GET" && p === "/api/runs") {
     const list = [...runs.values()].filter((r) => r.userId === user.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return json(res, 200, list.map(publicRun));
+  }
+  if (m === "GET" && (match = p.match(/^\/api\/runs\/([^/]+)\/artifacts(?:\/([^/]+))?$/))) {
+    const run = runs.get(match[1]);
+    if (!run || run.userId !== user.id) return err(res, 404, "run not found");
+    if (!match[2]) return json(res, 200, (run.artifacts || []).map((a) => ({ ...a, size: run.artifactBlobs?.get(a.id)?.cache?.length ?? 0 })));
+    const a = run.artifactBlobs?.get(match[2]);
+    if (!a || !(run.artifacts || []).some((x) => x.id === match[2])) return err(res, 404, "artifact not found");
+    const buf = a.cache || (a.cache = a.gen());
+    const type = a.meta.mime === "image/svg+xml" ? "text/plain" : a.meta.mime;
+    res.writeHead(200, { "Content-Type": type, "Content-Length": buf.length, "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'", "Cache-Control": "private, max-age=300" });
+    return res.end(buf);
+  }
+  if (m === "POST" && (match = p.match(/^\/api\/runs\/([^/]+)\/answers$/))) {
+    const run = runs.get(match[1]);
+    if (!run || run.userId !== user.id) return err(res, 404, "run not found");
+    if (run.outcome !== "needs_input") return err(res, 409, "this run is not waiting for answers");
+    const b = await readBody(req);
+    const answers = b && typeof b.answers === "object" && b.answers ? b.answers : null;
+    const text = answers ? Object.values(answers).filter((v) => typeof v === "string" && v.trim()).join(" ") : "";
+    if (!text) return err(res, 400, "answers are required");
+    const task = `${run.task}\n\nClarifications: ${text}`.slice(0, 4000);
+    const repo = repoByName(run.repo);
+    let cls = classify(task, "auto", true);
+    if (cls.type === "other") cls = { type: repo === UI_REPO ? "ui" : "feature", source: "auto", kind: repo === UI_REPO ? "ui" : "feature" };
+    const child = createSwarmRun({ repo, branch: run.branch, task, userId: user.id, autoPr: run.autoPr !== false, strict: run.strict, limits: run.limits, answers, kind: cls.kind === "bugfix" ? "partial" : cls.kind, cls });
+    child.parentRunId = run.id;
+    return json(res, 201, { runId: child.id });
   }
   if ((match = p.match(/^\/api\/runs\/([^/]+)(\/events|\/pr|\/merge|\/followup)?$/))) {
     const run = runs.get(match[1]);
@@ -899,7 +1010,10 @@ async function handle(req, res) {
       if (!run.pr) return err(res, 409, "this run has no pull request to update");
       const n = [...runs.values()].filter((r) => r.parentRunId === run.id).length;
       if (n >= 5) return err(res, 429, "Follow-up limit reached (5 per run).");
-      const child = createRepoRun({ repo: repoByName(run.repo), branch: run.branch, task: run.task, userId: user.id, parent: run, followup: msg });
+      const child =
+        run.engine === "swarm"
+          ? createSwarmRun({ repo: repoByName(run.repo), branch: run.branch, task: run.task, userId: user.id, parent: run, followup: msg, kind: "followup", cls: { type: run.taskType || "other", source: "auto" } })
+          : createRepoRun({ repo: repoByName(run.repo), branch: run.branch, task: run.task, userId: user.id, parent: run, followup: msg });
       return json(res, 201, { runId: child.id });
     }
     if (m === "POST" && sub === "/pr") {

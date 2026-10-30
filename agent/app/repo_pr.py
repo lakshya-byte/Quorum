@@ -137,6 +137,43 @@ async def _commit_files(api: GitHubAPI, repo: str, parent_sha: str, files: dict[
     return await api.create_commit(repo, message, tree, [parent_sha])
 
 
+async def _commit_changes(api: GitHubAPI, repo: str, parent_sha: str, files: dict[str, str | None], message: str) -> str:
+    """Like _commit_files but `None` deletes the path (git-data tree entries with a null sha)."""
+    base_tree = await api.get_commit_tree(repo, parent_sha)
+    entries: list[dict[str, Any]] = []
+    for path in sorted(files):
+        text = files[path]
+        sha = None if text is None else await api.create_blob(repo, text)
+        entries.append({"path": path, "mode": "100644", "type": "blob", "sha": sha})
+    tree = await api.create_tree(repo, base_tree, entries)  # type: ignore[arg-type]
+    return await api.create_commit(repo, message, tree, [parent_sha])
+
+
+async def open_repo_pr_commits(
+    api: GitHubAPI, repo: str, base: str, commits: list[dict[str, Any]], title: str, body: str, task: str,
+    now: int | None = None,
+) -> dict[str, Any]:
+    """Swarm PRs: ONE COMMIT PER UNIT (in merge order) on a single new patchloop/* branch, then the PR.
+    `commits` = [{"title": str, "files": {path: text | None}}]. Never touches the base branch; no merge call exists."""
+    commits = [c for c in commits if c.get("files")]
+    if not commits:
+        raise PRError("nothing to commit")
+    for c in commits:
+        validate_files({p: (t if t is not None else "") for p, t in c["files"].items()})
+    branch = branch_name(task, now)
+    assert_patchloop_branch(branch)
+    base = base or await api.get_default_branch(repo)
+    if branch == base:
+        raise PRError("refusing to write to the base branch")
+    parent = await api.get_ref_sha(repo, base)
+    for c in commits:
+        parent = await _commit_changes(api, repo, parent, c["files"], str(c.get("title") or "PatchLoop change")[:200])
+    await api.create_ref(repo, f"refs/heads/{branch}", parent)
+    pr = await api.create_pull(repo, title[:250], body, branch, base)
+    return {"url": pr["html_url"], "number": int(pr["number"]), "branch": branch, "fake": False, "updated": False,
+            "commits": len(commits)}
+
+
 async def open_repo_pr(
     api: GitHubAPI, repo: str, base: str, files: dict[str, str], title: str, body: str, task: str,
     now: int | None = None,
@@ -214,6 +251,53 @@ def repo_pr_body(
         parts.append(f"{draft['body']}\n\n## Risk\n{draft['risk']}")
     parts.append(f"## Tests\n{tests}\n```\n{_tail(node.get('output', ''))}\n```")
     parts.append(f"## Security\n{security}")
+    if run_url:
+        parts.append(f"## Run\n{run_url}")
+    if issue_ref:
+        parts.append(f"Fixes #{int(issue_ref)}")
+    parts.append(f"_{OPENED_BY}_")
+    return "\n\n".join(parts) + "\n"
+
+
+def _cell(text: Any, n: int = 140) -> str:
+    return " ".join(str(text or "").replace("|", "/").split())[:n]
+
+
+def swarm_pr_body(data: dict[str, Any], *, task: str, run_url: str = "", issue_ref: int | None = None,
+                  include_untrusted: bool = True) -> str:
+    """PR body of a swarm run: plan, criteria table, per-unit summary, advisory notes, honest caveats, run link.
+    `data` is the run's swarm result (engine ctx.result). `include_untrusted=False` drops the user's task text."""
+    plan = data.get("plan") or {}
+    rows = data.get("criteria_rows") or []
+    outcome = data.get("outcome", "")
+    parts = []
+    if include_untrusted:
+        parts.append(f"## Task\n{task[:1500]}")
+    parts.append(f"## Plan\nType: **{data.get('task_type', plan.get('task_type', ''))}** "
+                 f"({plan.get('task_type_source', 'auto')}). Outcome: **{outcome}**.\n\n{_cell(plan.get('summary'), 600)}")
+    if rows:
+        table = ["| Criterion | Kind | Gate | Result | Detail |", "|---|---|---|---|---|"]
+        for r in rows:
+            table.append(f"| {_cell(r['criterion_id'], 40)} | {r['kind']} | {'hard' if r['hard'] else 'advisory'} | "
+                         f"{r['status']} | {_cell(r.get('detail'))} |")
+        parts.append("## Verification\n" + "\n".join(table))
+    units = data.get("commits") or []
+    summaries = data.get("unit_summaries") or {}
+    if units:
+        lines = [f"- **{_cell(c.get('title') or c.get('unit_id'), 80)}** (`{c.get('unit_id')}`): "
+                 f"{_cell(summaries.get(c.get('unit_id'), c.get('summary')), 200)} "
+                 f"[{', '.join('`' + p + '`' for p in sorted(c.get('files') or {})[:6])}]" for c in units]
+        parts.append("## Changes (one commit per unit)\n" + "\n".join(lines))
+    adv = data.get("advisory") or []
+    if adv:
+        parts.append("## Advisory notes (not gating)\n" + "\n".join(
+            f"- {a['kind']} ({a['id']}): score {a.get('score')} - {_cell(a.get('rationale'), 200)}" for a in adv))
+    notes = [*(data.get("reasons") or []), *(data.get("plan_notes") or [])]
+    if outcome == "partial" or notes:
+        parts.append("## Caveats\n" + ("\n".join(f"- {_cell(n, 220)}" for n in notes[:10]) or "- (none)")
+                     + ("\n\nThis outcome is **partial**: review the caveats before merging." if outcome == "partial" else ""))
+    parts.append("## Security\n- Path policy and secret scan are enforced in code on every write and on the final diff; "
+                 "workers only ran in an isolated sandbox with an allow-listed command set.")
     if run_url:
         parts.append(f"## Run\n{run_url}")
     if issue_ref:

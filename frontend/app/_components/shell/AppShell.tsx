@@ -12,7 +12,7 @@ type NavItem = { href: string; label: string; icon: IconName; match?: (p: string
 
 const APP_NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: "home", match: (p) => p === "/dashboard" || p.startsWith("/runs") },
-  { href: "/new", label: "Fix a bug", icon: "bug" },
+  { href: "/new", label: "New task", icon: "bug" },
   { href: "/integrations", label: "Integrations", icon: "plug" },
   { href: "/settings/tokens", label: "API tokens", icon: "key" },
 ];
@@ -171,7 +171,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <kbd className="rounded border border-border-strong px-1 font-mono text-[11px] text-text-subtle">Ctrl K</kbd>
             </button>
             <LinkButton href="/new" size="sm" icon="plus">
-              <span className="hidden sm:inline">Fix a bug</span>
+              <span className="hidden sm:inline">New task</span>
               <span className="sm:hidden">New</span>
             </LinkButton>
             <NotificationsBell />

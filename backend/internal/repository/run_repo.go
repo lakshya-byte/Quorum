@@ -62,7 +62,7 @@ func (r *RunRepository) FindByID(ctx context.Context, id string) (*models.Run, e
 
 func (r *RunRepository) ListByUser(ctx context.Context, userID string, limit int64) ([]models.Run, error) {
 	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(limit).
-		SetProjection(bson.M{"nodes": 0})
+		SetProjection(bson.M{"nodes": 0, "plan": 0})
 	cur, err := r.col.Find(ctx, bson.M{"user_id": userID}, opts)
 	if err != nil {
 		return nil, err
@@ -183,6 +183,17 @@ type RunCompletion struct {
 	Safety       map[string]any
 	Cost         *models.Cost
 	LangsmithURL string
+
+	// Swarm fields (CONTRACT-V3); written only when non-empty.
+	Outcome         string
+	TaskType        string
+	TaskTypeSource  string
+	Plan            map[string]any
+	CriteriaSummary *models.CriteriaSummary
+	AgentsSpawned   int
+	PeakParallel    int
+	Artifacts       []any
+	Questions       []any
 }
 
 // Complete marks the run with the given agent run id as completed and
@@ -227,6 +238,33 @@ func (r *RunRepository) Complete(ctx context.Context, agentRunID string, c RunCo
 	}
 	if c.LangsmithURL != "" {
 		set["langsmith_url"] = c.LangsmithURL
+	}
+	if c.Outcome != "" {
+		set["outcome"] = c.Outcome
+	}
+	if c.TaskType != "" {
+		set["task_type"] = c.TaskType
+	}
+	if c.TaskTypeSource != "" {
+		set["task_type_source"] = c.TaskTypeSource
+	}
+	if len(c.Plan) > 0 {
+		set["plan"] = c.Plan
+	}
+	if c.CriteriaSummary != nil {
+		set["criteria_summary"] = c.CriteriaSummary
+	}
+	if c.AgentsSpawned > 0 {
+		set["agents_spawned"] = c.AgentsSpawned
+	}
+	if c.PeakParallel > 0 {
+		set["peak_parallel"] = c.PeakParallel
+	}
+	if len(c.Artifacts) > 0 {
+		set["artifacts"] = c.Artifacts
+	}
+	if len(c.Questions) > 0 {
+		set["questions"] = c.Questions
 	}
 	var prev models.Run
 	err = r.col.FindOneAndUpdate(ctx, bson.M{"agent_run_id": agentRunID}, bson.M{"$set": set},
@@ -280,6 +318,33 @@ func ApplyCompletion(prev models.Run, c RunCompletion, now time.Time) *models.Ru
 	}
 	if c.LangsmithURL != "" {
 		cur.LangsmithURL = c.LangsmithURL
+	}
+	if c.Outcome != "" {
+		cur.Outcome = c.Outcome
+	}
+	if c.TaskType != "" {
+		cur.TaskType = c.TaskType
+	}
+	if c.TaskTypeSource != "" {
+		cur.TaskTypeSource = c.TaskTypeSource
+	}
+	if len(c.Plan) > 0 {
+		cur.Plan = c.Plan
+	}
+	if c.CriteriaSummary != nil {
+		cur.CriteriaSummary = c.CriteriaSummary
+	}
+	if c.AgentsSpawned > 0 {
+		cur.AgentsSpawned = c.AgentsSpawned
+	}
+	if c.PeakParallel > 0 {
+		cur.PeakParallel = c.PeakParallel
+	}
+	if len(c.Artifacts) > 0 {
+		cur.Artifacts = c.Artifacts
+	}
+	if len(c.Questions) > 0 {
+		cur.Questions = c.Questions
 	}
 	return &cur
 }

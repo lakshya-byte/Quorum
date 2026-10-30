@@ -121,6 +121,19 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.stream(w, r, parts[1])
+	case r.Method == http.MethodGet && len(parts) >= 3 && parts[0] == "runs" && parts[2] == "artifacts" && len(parts) <= 4:
+		a.mu.Lock()
+		rr := a.repoRuns[parts[1]]
+		a.mu.Unlock()
+		if rr == nil {
+			writeJSON(w, 404, map[string]any{"detail": "run not found"})
+			return
+		}
+		if len(parts) == 3 {
+			a.listArtifacts(w, rr)
+		} else {
+			a.getArtifact(w, rr, parts[3])
+		}
 	case r.Method == http.MethodGet && len(parts) == 2 && parts[0] == "runs":
 		a.mu.Lock()
 		info, ok := a.runs[parts[1]]

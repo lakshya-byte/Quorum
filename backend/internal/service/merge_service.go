@@ -83,6 +83,22 @@ func evaluate(info *PRInfo) {
 	}
 }
 
+// PartialWarning is attached to merge info/results of partial runs.
+const PartialWarning = "partial result: some criteria had no executable verifier or only some units landed; review the pull request carefully"
+
+// partialWarning adds the partial-outcome warning (merge stays allowed per
+// the v2 rules; it only informs the human).
+func partialWarning(info *PRInfo, run *models.Run) {
+	if run.Outcome != models.OutcomePartial {
+		return
+	}
+	if info.Warning == "" {
+		info.Warning = PartialWarning
+	} else {
+		info.Warning += "; " + PartialWarning
+	}
+}
+
 // Info reads the live PR state and applies the merge gate.
 func (m *MergeService) Info(ctx context.Context, run *models.Run) (*PRInfo, error) {
 	if run.Kind != models.RunKindRepo || run.PRNumber == 0 || run.PRURL == "" {
@@ -106,6 +122,7 @@ func (m *MergeService) Info(ctx context.Context, run *models.Run) (*PRInfo, erro
 			info.State = "merged"
 		}
 		evaluate(info)
+		partialWarning(info, run)
 		info.Merged = run.Merged
 		return info, nil
 	}
@@ -135,6 +152,7 @@ func (m *MergeService) Info(ctx context.Context, run *models.Run) (*PRInfo, erro
 		info.Checks = ChecksSummary{State: "none", Failing: []string{}}
 	}
 	evaluate(info)
+	partialWarning(info, run)
 	info.Merged = run.Merged
 	return info, nil
 }

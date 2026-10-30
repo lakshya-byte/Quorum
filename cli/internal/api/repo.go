@@ -59,6 +59,10 @@ type TaskResponse struct {
 	Engine string `json:"engine"`
 	Repo   string `json:"repo"`
 	Branch string `json:"branch"`
+
+	TaskType      string  `json:"taskType"`
+	Limits        *Limits `json:"limits"`
+	LimitsClamped bool    `json:"limitsClamped"`
 }
 
 func (c *Client) CreateTask(ctx context.Context, repo, branch, task string, autoPR bool) (*TaskResponse, error) {

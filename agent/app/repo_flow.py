@@ -20,7 +20,8 @@ from app.repo_agents import first_test_name, heuristic_locate, repro_path_for
 from app.repo_detect import is_test_path
 from app.repo_eval import build_repo_bug, run_tests
 from app.repo_loader import RepoError, RepoSnapshot, demo_names, fetch_github, load_demo
-from app.repo_pr import PRError, fake_pr, open_repo_pr, push_followup, redact, repo_pr_body
+from app.repo_pr import (PRError, fake_pr, open_repo_pr, open_repo_pr_commits, push_followup, redact, repo_pr_body,
+                         swarm_pr_body)
 from app.scoring import parse_results
 from app.telemetry import background_run, run_id_var, trace_id_var
 
@@ -43,6 +44,11 @@ class RepoSpec:
     followup: dict[str, Any] | None = None
     source: str = "api"
     issue_ref: int | None = None
+    # contract v3 (swarm)
+    task_type: str = "auto"
+    strict: list[str] = field(default_factory=list)
+    limits: dict[str, Any] = field(default_factory=dict)
+    answers: dict[str, str] = field(default_factory=dict)
 
 
 def resolve_demo(full_name: str, fake_mode: bool) -> str | None:
@@ -117,6 +123,8 @@ async def run_repo_task(reg: Any, run: Any, spec: RepoSpec, demo_name: str | Non
 
     with background_run("run/repo", run.trace_headers):
         try:
+            if not demo_name:  # first event within ~2 s even while a big repository downloads
+                run.emit("status", {"stage": "repo", "message": f"fetching {spec.full_name}@{spec.branch}"})
             sandbox = reg._sandbox(run.mode)
             status, ctx, handle = await _pipeline(reg, run, spec, demo_name, sandbox, emit)
         except BudgetExceeded:
@@ -136,10 +144,22 @@ async def run_repo_task(reg: Any, run: Any, spec: RepoSpec, demo_name: str | Non
                 except Exception:
                     log.warning("could not release the sandbox checkpoint")
         run._token = ""  # the credential is not needed after the PR attempt
+        if not run.outcome:
+            fill_bugfix_summary(run, status)
         run.finish(status)
         reg._record_metrics(run, ctx)
     reg.save(run)
     await reg._report(run)
+
+
+def fill_bugfix_summary(run: Any, status: str) -> None:
+    """The bugfix strategy keeps its own events; the completion callback still gets task_type/outcome/criteria."""
+    done = run.done_event()
+    solved = bool(done.get("solved"))
+    run.task_type = run.task_type or "bugfix"
+    run.outcome = "complete" if solved else ("blocked" if status == "blocked" else "failed")
+    run.criteria = {"hard_pass": 2 if solved else 0, "hard_total": 2, "advisory": []}  # reproducer + existing suite
+    run.agents = run.agents or {"spawned": 0, "peak_parallel": 3 if done.get("candidates") else 0}
 
 
 async def _pipeline(reg: Any, run: Any, spec: RepoSpec, demo_name: str | None, sandbox: Any, emit: Any):
@@ -172,6 +192,11 @@ async def _pipeline(reg: Any, run: Any, spec: RepoSpec, demo_name: str | None, s
         run.emit("done", {"solved": False, "best": None, "usage": zero(), "engine": "graph", "rounds": 0,
                           "candidates": 0, "cancelled": 0, "stopped": "guard"})
         return "blocked", None, None
+
+    # 1b. strategy: the existing bug-fix graph (cheap path) or the task-adaptive swarm (contract v3)
+    strategy, sctx = await choose_strategy(reg, run, spec, snap, text, guard_event)
+    if strategy == "swarm":
+        return await swarm_pipeline(reg, run, spec, snap, guard_event, sctx)
 
     if not snap.test_command:
         run.emit("error", {"stage": "tests", "message": "no test command could be detected for this repository "
@@ -271,6 +296,140 @@ async def _pipeline(reg: Any, run: Any, spec: RepoSpec, demo_name: str | None, s
     return status, ctx, handle
 
 
+def build_swarm_ctx(reg: Any, run: Any, spec: RepoSpec, snap: RepoSnapshot, text: str, guard_event: dict[str, Any]) -> Any:
+    from app.swarm.types import SwarmCtx
+
+    async def swarm_emit(kind: str, data: dict[str, Any]) -> None:
+        run.emit(kind, data)
+
+    ctx = SwarmCtx(
+        run_id=run.run_id, task=text, full_name=snap.full_name, files=snap.files, settings=reg.settings, emit=swarm_emit,
+        deps=None, llm_factory=None, mode=run.mode, task_type=spec.task_type, strict=list(spec.strict),
+        limits=dict(spec.limits), answers=dict(spec.answers), language=snap.language, demo=snap.demo,
+        secrets=[spec.token] if spec.token else [], guard_event=guard_event,
+        trace_tags=[f"repo:{snap.full_name}", f"source:{run.source or 'api'}", "kind:repo", f"requested_type:{spec.task_type}"],
+        trace_meta={"repo": snap.full_name, "source": run.source or "api", "kind": "repo", "requested_type": spec.task_type},
+    )
+    if reg.swarm_llm_factory is not None:  # tests / alternative LLM wiring
+        ctx.llm_factory = reg.swarm_llm_factory(ctx)
+    elif run.mode == "fake":
+        ctx.fake = reg.fake_swarm()
+        ctx.llm_factory = ctx.fake.llm_factory(snap.full_name, text, spec.task_type, spec.answers)
+    else:
+        from app.swarm.engine import live_llm_factory
+
+        ctx.llm_factory = live_llm_factory(ctx)
+    return ctx
+
+
+def ensure_deps(reg: Any, run: Any, ctx: Any, snap: RepoSnapshot) -> None:
+    """Raises SwarmDepsError with a readable message when the sandbox/verifier modules are missing."""
+    if reg.swarm_deps is not None:
+        ctx.deps = reg.swarm_deps
+    elif ctx.deps is None:
+        from app.swarm.deps import load_deps
+
+        ctx.deps = load_deps(run.mode, reg.settings, demo=snap.demo)
+
+
+async def choose_strategy(reg: Any, run: Any, spec: RepoSpec, snap: RepoSnapshot, text: str,
+                          guard_event: dict[str, Any]) -> tuple[str, Any]:
+    """('bugfix', None) -> existing graph engine; ('swarm', ctx) -> swarm. The bugfix graph needs a Python test suite."""
+    py_ok = snap.language == "python" and bool(snap.test_command)
+    req = spec.task_type
+    if spec.followup:  # follow-ups continue on the PR branch with the graph engine
+        return "bugfix", None
+    if req == "bugfix":
+        return ("bugfix", None) if py_ok else ("swarm", build_swarm_ctx(reg, run, spec, snap, text, guard_event))
+    if run.mode == "fake" and reg.swarm_llm_factory is None:
+        pick = reg.fake_swarm().strategy_for(snap.full_name, text, req)
+        if pick == "bugfix" and py_ok:
+            return "bugfix", None
+        return "swarm", build_swarm_ctx(reg, run, spec, snap, text, guard_event)
+    ctx = build_swarm_ctx(reg, run, spec, snap, text, guard_event)
+    if req != "auto":
+        return "swarm", ctx
+    # live/hybrid, task type left to the planner: it decides between the cheap bugfix path and the swarm
+    from app.swarm.deps import SwarmDepsError
+    from app.swarm.engine import plan_only
+
+    try:
+        ensure_deps(reg, run, ctx, snap)
+        run.emit("status", {"stage": "plan", "message": "planning the task"})
+        plan = await plan_only(ctx)
+    except SwarmDepsError as exc:
+        if py_ok:
+            run.emit("status", {"stage": "plan", "message": f"swarm unavailable ({str(exc)[:160]}); using the bug-fix strategy"})
+            return "bugfix", None
+        return "swarm", ctx  # swarm_pipeline reports the error
+    except Exception as exc:
+        log.warning("planning for strategy choice failed: %s", type(exc).__name__)
+        return ("bugfix", None) if py_ok else ("swarm", ctx)
+    if plan.task_type == "bugfix" and plan.cheap_path and py_ok and not plan.clarify:
+        return "bugfix", None
+    ctx.plan = plan
+    return "swarm", ctx
+
+
+def swarm_record(result: dict[str, Any]) -> dict[str, Any]:
+    keep = ("outcome", "task_type", "plan", "criteria_rows", "commits", "spec_files", "final_files", "deleted", "reasons",
+            "agents", "criteria", "plan_notes", "unit_summaries", "advisory", "skipped_deletes")
+    return {k: result[k] for k in keep if k in result}
+
+
+async def swarm_pipeline(reg: Any, run: Any, spec: RepoSpec, snap: RepoSnapshot, guard_event: dict[str, Any], ctx: Any):
+    from app.swarm.deps import SwarmDepsError
+    from app.swarm.engine import run_swarm
+
+    try:
+        ensure_deps(reg, run, ctx, snap)
+    except SwarmDepsError as exc:
+        run.emit("error", {"stage": "swarm", "message": str(exc)})
+        run.emit("done", {"solved": False, "outcome": "failed", "task_type": spec.task_type, "best": None,
+                          "usage": zero(), "engine": "swarm", "rounds": 0, "candidates": 0, "cancelled": 0,
+                          "stopped": "no_sandbox", "agents": {"spawned": 0, "peak_parallel": 0}})
+        run.outcome, run.task_type = "failed", spec.task_type
+        return "error", None, None
+    await run_swarm(ctx)
+    res = ctx.result
+    run.artifact_store = res.get("artifact_store")
+    run.swarm = swarm_record(res)
+    run.task_type = res.get("task_type", "")
+    run.outcome = res.get("outcome", "failed")
+    run.criteria = res.get("criteria") or {}
+    run.agents = res.get("agents") or {}
+    run.plan = res.get("plan") or {}
+    final = res.get("final_files") or {}
+    run.files_changed = len(final) if run.outcome in ("complete", "partial") else 0
+    run.cause = (res.get("plan") or {}).get("summary", "")
+    if run.outcome in ("complete", "partial") and spec.auto_pr and final:
+        try:
+            await open_run_pr(reg, run, spec.token)
+        except PRError as exc:
+            run.emit("error", {"stage": "pr", "message": redact(str(exc), spec.token)})
+        except Exception as exc:
+            log.warning("opening the PR failed: %s", type(exc).__name__)
+            run.emit("error", {"stage": "pr", "message": f"could not open the pull request: {type(exc).__name__}"})
+    status = "blocked" if run.outcome == "blocked" else "done"
+    return status, None, None
+
+
+PR_PREFIX = {"bugfix": "fix", "feature": "feat", "refactor": "refactor", "ui": "ui", "tests": "test", "perf": "perf",
+             "deps": "deps", "docs": "docs", "migration": "migrate", "other": "chore"}
+
+
+def swarm_commits(run: Any) -> list[dict[str, Any]]:
+    """One commit per unit, in merge order; verification assets (spec tests) first."""
+    sw = run.swarm
+    commits: list[dict[str, Any]] = []
+    if sw.get("spec_files"):
+        commits.append({"title": "test: add verification tests written before the change", "files": dict(sw["spec_files"])})
+    for c in sw.get("commits", []):
+        commits.append({"title": f"{PR_PREFIX.get(run.task_type, 'chore')}: {c.get('title') or c.get('unit_id')}",
+                        "files": c["files"]})
+    return commits
+
+
 def zero() -> dict[str, int]:
     return {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
 
@@ -293,7 +452,8 @@ async def open_run_pr(reg: Any, run: Any, token: str) -> dict[str, Any]:
         done = run.done_event()
         best = done.get("best") or {}
         files = best.get("files") or {}
-        if not done.get("solved") or not files:
+        swarm_run = bool(run.swarm) and done.get("outcome") in ("complete", "partial")
+        if not files or not (done.get("solved") or swarm_run):
             raise PRError("run is not solved")
         followup = run.followup or None
         draft = run.pr_draft if run.pr_draft and run.pr_draft.get("guard") == "pass" else None
@@ -301,17 +461,26 @@ async def open_run_pr(reg: Any, run: Any, token: str) -> dict[str, Any]:
         shim = {"issue": run.task, "reproducer_path": run.repro_path}
         safety = done.get("safety")
         title = ((draft or {}).get("title") or f"fix: {run.task.strip().splitlines()[0][:100]}")[:200]
+        if swarm_run:
+            title = f"{PR_PREFIX.get(run.task_type, 'chore')}: {run.task.strip().splitlines()[0][:100]}"[:200]
+        title = redact(title, token)
 
         async def body(include_untrusted: bool) -> str:
+            if swarm_run:
+                return swarm_pr_body(run.swarm, task=run.task, run_url=run.run_url, issue_ref=run.issue_ref,
+                                     include_untrusted=include_untrusted)
             return repo_pr_body(shim, best, cause=run.cause, draft=draft, label=label, run_url=run.run_url,
                                 issue_ref=run.issue_ref, safety=safety, include_untrusted=include_untrusted)
 
-        text = await body(True)
+        text = redact(await body(True), token)
         verdict = await reg.guard.check("output", f"{title}\n\n{text}", run.mode, run.run_id)
         if verdict["verdict"] != "pass":  # fall back to the deterministic template without task/model text
-            title, text = "fix: automated change", await body(False)
+            title, text = f"{PR_PREFIX.get(run.task_type, 'fix') if swarm_run else 'fix'}: automated change", redact(await body(False), token)
+        commits = swarm_commits(run) if swarm_run else []
         if run.demo:
             info = fake_pr(run.repo, run.task, run.run_id, followup)
+            if swarm_run:
+                info["commits"] = len(commits)
         else:
             if not token:
                 raise PRError("a GitHub token is required to open the pull request")
@@ -323,6 +492,8 @@ async def open_run_pr(reg: Any, run: Any, token: str) -> dict[str, Any]:
                                                pr_url=followup.get("pr_url", ""))
                     if not info["url"]:
                         info["url"] = f"https://github.com/{run.repo}/pull/{info['number']}"
+                elif swarm_run:
+                    info = await open_repo_pr_commits(api, run.repo, run.branch, commits, title, text, run.task)
                 else:
                     info = await open_repo_pr(api, run.repo, run.branch, files, title, text, run.task)
             except PRError:
@@ -337,7 +508,8 @@ async def open_run_pr(reg: Any, run: Any, token: str) -> dict[str, Any]:
         run.pr_fake = bool(info["fake"])
         run.files_changed = len(files)
         run.emit("pr", {"url": info["url"], "branch": info["branch"], "number": info["number"],
-                        "fake": info["fake"], **({"updated": True} if info.get("updated") else {})})
+                        "fake": info["fake"], **({"updated": True} if info.get("updated") else {}),
+                        **({"commits": info["commits"]} if info.get("commits") else {})})
         reg.save(run)
         return pr_info(run)
 

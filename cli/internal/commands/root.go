@@ -36,7 +36,8 @@ func NewRoot() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().StringVar(&apiFlag, "api", "", "backend URL (default: saved config, $PATCHLOOP_API, or "+config.DefaultAPI+")")
-	root.AddCommand(loginCmd(), whoamiCmd(), bugsCmd(), fixCmd(), runsCmd(), watchCmd(), prCmd())
+	root.AddCommand(loginCmd(), whoamiCmd(), bugsCmd(), taskCmd("fix"), taskCmd("do"), runsCmd(), watchCmd(), prCmd())
+	root.AddCommand(answerCmd(), artifactsCmd())
 	root.AddCommand(repoCommands()...)
 	return root
 }
@@ -191,7 +192,7 @@ func runsCmd() *cobra.Command {
 				return err
 			}
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			fmt.Fprintln(tw, "RUN\tTARGET\tSOURCE\tMODE\tSTATUS\tSOLVED\tCREATED\tPR")
+			fmt.Fprintln(tw, "RUN\tTARGET\tTYPE\tSOURCE\tMODE\tSTATUS\tOUTCOME\tCREATED\tPR")
 			for _, r := range runs {
 				target := r.BugID
 				if r.Kind == "repo" {
@@ -201,7 +202,21 @@ func runsCmd() *cobra.Command {
 				if source == "" {
 					source = "web"
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%v\t%s\t%s\n", r.ID, target, source, r.Mode, r.Status, r.Solved,
+				outcome := r.Outcome
+				if outcome == "" {
+					outcome = "failed"
+					if r.Solved {
+						outcome = "complete"
+					}
+					if r.Status != "completed" {
+						outcome = "-"
+					}
+				}
+				taskType := r.TaskType
+				if taskType == "" {
+					taskType = "-"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, target, taskType, source, r.Mode, r.Status, outcome,
 					r.CreatedAt.Local().Format("2006-01-02 15:04"), r.PRURL)
 			}
 			return tw.Flush()
@@ -232,6 +247,9 @@ func prCmd() *cobra.Command {
 				} else {
 					fmt.Fprintf(out, "not mergeable yet: %s\n", info.Reason)
 				}
+				if info.Warning != "" {
+					fmt.Fprintf(out, "warning: %s\n", info.Warning)
+				}
 				return nil
 			}
 			url, err := cl.OpenPR(cmd.Context(), args[0])
@@ -243,61 +261,6 @@ func prCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&status, "status", false, "show PR state and checks instead of opening a PR")
-	return c
-}
-
-func fixCmd() *cobra.Command {
-	var engine, repo, branch string
-	var replay, jsonOut, noPR bool
-	c := &cobra.Command{
-		Use:   "fix [--repo owner/name] <problem | bug-id>",
-		Short: "Fix a bug in a GitHub repo (--repo) or a bundled bug, streaming the agents' search live",
-		Long: `With --repo, the argument is a plain-English problem description:
-
-  patchloop fix --repo octo/widgets "pagination returns the wrong last page"
-
-PatchLoop reads the repo, writes a reproducer, tries candidate fixes in a
-sandbox and opens a pull request. Agents never merge; you do (patchloop merge).
-Exit codes: 0 solved, 1 not solved, 2 error.
-
-Without --repo, the argument is the id of a bundled bug (patchloop bugs).`,
-		Args: cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if engine != "" && engine != "loop" && engine != "graph" {
-				return errors.New(`--engine must be "loop" or "graph"`)
-			}
-			cl, err := client()
-			if err != nil {
-				if repo != "" {
-					return fail(cmd, err)
-				}
-				return err
-			}
-			if repo != "" {
-				return repoFix(cmd, cl, repo, branch, strings.Join(args, " "), !noPR, jsonOut)
-			}
-			if len(args) != 1 {
-				return errors.New("a bundled bug takes exactly one id; use --repo owner/name to describe a problem in your own repo")
-			}
-			run, err := cl.CreateRun(cmd.Context(), args[0], engine, replay)
-			if err != nil {
-				return err
-			}
-			if !jsonOut {
-				fmt.Fprintf(cmd.ErrOrStderr(), "run %s started (mode=%s engine=%s)\n", run.RunID, run.Mode, run.Engine)
-				if run.Notice != "" {
-					fmt.Fprintf(cmd.ErrOrStderr(), "notice: %s\n", run.Notice)
-				}
-			}
-			return stream(cmd, cl, run.RunID, jsonOut)
-		},
-	}
-	c.Flags().StringVar(&engine, "engine", "", "search engine: graph or loop (default: server's)")
-	c.Flags().BoolVar(&replay, "replay", false, "replay a recorded real run (no LLM/sandbox cost)")
-	c.Flags().BoolVar(&jsonOut, "json", false, "print raw events, one JSON object per line")
-	c.Flags().StringVar(&repo, "repo", "", "GitHub repo to fix, owner/name (see: patchloop repos)")
-	c.Flags().StringVar(&branch, "branch", "", "base branch (default: the repo's default branch)")
-	c.Flags().BoolVar(&noPR, "no-pr", false, "do not open a pull request automatically (open later with: patchloop pr <run>)")
 	return c
 }
 

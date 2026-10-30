@@ -3,7 +3,8 @@
 // Node objects keep their identity once stored, so memoised cards only
 // re-render when their own data changes.
 
-import type { Run, RunNode, Usage } from "./api";
+import type { ArtifactMeta, Outcome, Plan, Run, RunNode, Usage, VerifyResultRow, CriteriaSummary } from "./api";
+import { TOOL_KEEP, initialSwarm, type AgentState, type SwarmState, type ToolEvent, type UnitState } from "./swarm";
 
 export type GuardStage = "input" | "policy" | "output";
 export type GuardEvent = {
@@ -20,12 +21,17 @@ export type DoneEvent = {
   usage?: Usage;
   latency_ms?: number;
   time_to_first_node_ms?: number | null;
+  /** v3 */
+  outcome?: Outcome;
+  task_type?: string;
+  criteria?: { hard_pass?: number | boolean; hard_total?: number; advisory?: unknown[]; unverified?: string[] };
+  agents?: { spawned?: number; peak_parallel?: number };
 };
 
 export type RepoEvent = { full_name: string; branch: string; files?: number; language?: string; test_command?: string; truncated?: boolean };
 export type LocateEvent = { files: { path: string; reason?: string }[] };
 export type ReproEvent = { path?: string; test_name?: string; failed_on_original: boolean; output_tail?: string };
-export type PrEvent = { url: string; branch?: string; number?: number; fake?: boolean; updated?: boolean };
+export type PrEvent = { url: string; branch?: string; number?: number; fake?: boolean; updated?: boolean; commits?: number };
 
 export type StreamStatus = "idle" | "connecting" | "live" | "reconnecting" | "finished" | "lost";
 
@@ -56,6 +62,7 @@ export type RunState = {
   endedAt: number | null;
   fromSnapshot: boolean;
   attempt: number;
+  swarm: SwarmState;
 };
 
 export const initialRunState: RunState = {
@@ -85,6 +92,7 @@ export const initialRunState: RunState = {
   endedAt: null,
   fromSnapshot: false,
   attempt: 0,
+  swarm: initialSwarm,
 };
 
 export type StreamMessage = { type: string; data?: Record<string, unknown> };
@@ -171,13 +179,29 @@ export function runReducer(s: RunState, a: RunAction): RunState {
         fromSnapshot: true,
       };
       for (const n of r.nodes || []) next = addNode(next, n);
+      if (r.plan || r.outcome || r.artifacts?.length || r.criteriaSummary) {
+        next = {
+          ...next,
+          swarm: {
+            ...initialSwarm,
+            plan: r.plan || null,
+            artifacts: r.artifacts || [],
+            saved: { agentsSpawned: r.agentsSpawned, peakParallel: r.peakParallel, criteriaSummary: r.criteriaSummary },
+          },
+        };
+      }
       if (finished) {
         next.done = {
           solved: r.solved,
           best: r.bestNodeId,
           usage: r.usage || undefined,
           latency_ms: r.latencyMs ?? undefined,
+          ...(r.outcome ? { outcome: r.outcome } : {}),
+          ...(r.taskType ? { task_type: r.taskType } : {}),
+          ...(r.criteriaSummary ? { criteria: r.criteriaSummary as DoneEvent["criteria"] } : {}),
+          ...(r.agentsSpawned != null ? { agents: { spawned: r.agentsSpawned, peak_parallel: r.peakParallel ?? undefined } } : {}),
         };
+        if (r.outcome === "needs_input") next.errors = [];
         if (r.status === "failed" && !r.solved) next.errors = [{ message: "This run failed before it finished." }];
       }
       return next;
@@ -223,8 +247,12 @@ export function runReducer(s: RunState, a: RunAction): RunState {
           if (prev.includes(lesson)) return base;
           return { ...base, lessons: { ...base.lessons, [id]: [...prev, lesson] } };
         }
-        case "done":
-          return { ...base, done: { ...(d as unknown as DoneEvent), best: bestNodeId(d.best) }, endedAt: base.endedAt ?? a.at };
+        case "done": {
+          // v3: done.best is the combined result node (files + diff); keep it so the diff viewer can show it
+          const bn = d.best && typeof d.best === "object" ? (d.best as RunNode) : null;
+          const withBest = bn && typeof bn.id === "number" && !base.nodes[bn.id] ? addNode(base, bn) : base;
+          return { ...withBest, done: { ...(d as unknown as DoneEvent), best: bestNodeId(d.best) }, endedAt: withBest.endedAt ?? a.at };
+        }
         case "repo":
           return { ...base, repo: d as unknown as RepoEvent };
         case "locate":
@@ -238,6 +266,52 @@ export function runReducer(s: RunState, a: RunAction): RunState {
           if (base.errors.some((x) => x.message === e.message && x.stage === e.stage)) return base;
           return { ...base, errors: [...base.errors, e] };
         }
+        case "plan":
+          return { ...base, swarm: { ...base.swarm, plan: d as unknown as Plan } };
+        case "clarify": {
+          const q = Array.isArray(d.questions) ? (d.questions as { id: string; text: string }[]) : [];
+          return { ...base, swarm: { ...base.swarm, clarify: q } };
+        }
+        case "agent":
+          return swarmAgent(base, d);
+        case "tool":
+          return swarmTool(base, d);
+        case "unit": {
+          const id = String(d.id || "");
+          if (!id) return base;
+          const prev = base.swarm.units[id];
+          const u: UnitState = {
+            id,
+            status: (d.status as UnitState["status"]) || prev?.status || "pending",
+            winner_variant: (d.winner_variant as string | undefined) ?? prev?.winner_variant,
+            files: Array.isArray(d.files) ? (d.files as string[]) : prev?.files || [],
+            diff: (d.diff as string | undefined) ?? prev?.diff,
+            checks: d.checks ?? prev?.checks,
+          };
+          return { ...base, swarm: { ...base.swarm, units: { ...base.swarm.units, [id]: u } } };
+        }
+        case "merge": {
+          const m = { status: d.status as "ok", units: (d.units as string[]) || [], conflicts: (d.conflicts as string[]) || [] };
+          return { ...base, swarm: { ...base.swarm, merges: [...base.swarm.merges, m] } };
+        }
+        case "verify": {
+          const round = Number(d.round) || base.swarm.verifies.length + 1;
+          const v = {
+            round,
+            results: (d.results as VerifyResultRow[]) || [],
+            hard_pass: !!d.hard_pass,
+            summary: (d.summary as { pass: number; fail: number; skip: number; advisory: number }) || { pass: 0, fail: 0, skip: 0, advisory: 0 },
+          };
+          const rest = base.swarm.verifies.filter((x) => x.round !== round);
+          return { ...base, swarm: { ...base.swarm, verifies: [...rest, v].sort((a, b) => a.round - b.round) } };
+        }
+        case "artifact": {
+          const a = d as unknown as ArtifactMeta;
+          if (!a.id || base.swarm.artifacts.some((x) => x.id === a.id)) return base;
+          return { ...base, swarm: { ...base.swarm, artifacts: [...base.swarm.artifacts, a] } };
+        }
+        case "budget":
+          return { ...base, swarm: { ...base.swarm, budget: d as unknown as SwarmState["budget"] } };
         case "end":
           return { ...base, status: "finished", endedAt: base.endedAt ?? a.at };
         default:
@@ -246,6 +320,42 @@ export function runReducer(s: RunState, a: RunAction): RunState {
     }
   }
 }
+
+function swarmAgent(s: RunState, d: Record<string, unknown>): RunState {
+  const id = String(d.id || "");
+  if (!id) return s;
+  const w = s.swarm;
+  const prev = w.agents[id];
+  const a: AgentState = {
+    id,
+    role: String(d.role || prev?.role || "worker"),
+    unit_id: (d.unit_id as string | null | undefined) ?? prev?.unit_id ?? null,
+    variant: (d.variant as string | null | undefined) ?? prev?.variant ?? null,
+    status: (d.status as AgentState["status"]) || prev?.status || "spawned",
+    model: (d.model as string | null | undefined) ?? prev?.model,
+    isolation: (d.isolation as string | undefined) ?? prev?.isolation,
+    summary: (d.summary as string | undefined) ?? prev?.summary,
+    tokens: (d.tokens as number | undefined) ?? prev?.tokens,
+    steps: (d.steps as number | undefined) ?? prev?.steps,
+    tools: prev?.tools || [],
+    toolCount: prev?.toolCount || 0,
+    order: prev?.order ?? w.agentOrder.length,
+  };
+  const agents = { ...w.agents, [id]: a };
+  const agentOrder = prev ? w.agentOrder : [...w.agentOrder, id];
+  const running = agentOrder.filter((x) => agents[x].status === "running" || agents[x].status === "spawned").length;
+  return { ...s, swarm: { ...w, agents, agentOrder, peakParallel: Math.max(w.peakParallel, running) } };
+}
+
+function swarmTool(s: RunState, d: Record<string, unknown>): RunState {
+  const t = d as unknown as ToolEvent;
+  const prev = s.swarm.agents[t.agent_id];
+  if (!prev) return s;
+  const a: AgentState = { ...prev, tools: [t, ...prev.tools].slice(0, TOOL_KEEP), toolCount: prev.toolCount + 1 };
+  return { ...s, swarm: { ...s.swarm, agents: { ...s.swarm.agents, [a.id]: a } } };
+}
+
+export type { CriteriaSummary };
 
 export function isFinishedRun(r: Run): boolean {
   if (r.completedAt) return true;

@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth as useClerkAuth, useClerk } from "@clerk/nextjs";
-import { authApi, type User } from "./api";
+import { MOCK_AUTH, MOCK_TOKEN_KEY, authApi, type User } from "./api";
 import { PageSkeleton } from "../_ui";
 
 type AuthState = {
@@ -21,6 +21,41 @@ const AuthContext = createContext<AuthState | null>(null);
  * app reads through useAuth() exactly as before.
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
+  return MOCK_AUTH ? <MockAuthProvider>{children}</MockAuthProvider> : <ClerkAuthProvider>{children}</ClerkAuthProvider>;
+}
+
+/** Offline mock backend only (NEXT_PUBLIC_MOCK_AUTH=1 at build time): the session is a bearer token in localStorage. Never used with Clerk. */
+function MockAuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const reload = useCallback(async () => {
+    try {
+      const { user } = await authApi.me();
+      setUser(user);
+    } catch {
+      setUser(null);
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+  const signOut = useCallback(async () => {
+    try {
+      window.localStorage.removeItem(MOCK_TOKEN_KEY);
+    } catch {
+      // storage unavailable
+    }
+    setUser(null);
+    window.location.assign("/");
+  }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial session lookup
+    reload();
+  }, [reload]);
+  const value = useMemo(() => ({ user, loading: !loaded, reload, signOut }), [user, loaded, reload, signOut]);
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+function ClerkAuthProvider({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn } = useClerkAuth();
   const clerk = useClerk();
   const [user, setUser] = useState<User | null>(null);

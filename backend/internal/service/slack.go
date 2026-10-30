@@ -172,14 +172,29 @@ func truncate(s string, n int) string {
 
 // RepoResultText is the one-line result of a repo run.
 func RepoResultText(run *models.Run) string {
-	switch {
-	case run.Solved && run.PRURL != "":
-		return "Fix found, tests pass, PR opened"
-	case run.Solved:
+	swarm := run.CriteriaSummary != nil
+	switch runOutcome(run) {
+	case models.OutcomeNeedsInput:
+		return "PatchLoop needs more information to continue"
+	case models.OutcomeBlocked:
+		return "blocked by a safety policy, nothing was changed"
+	case models.OutcomePartial:
+		if run.PRURL != "" {
+			return "hard gates pass but not everything could be verified, PR opened"
+		}
+		return "hard gates pass but not everything could be verified (no PR yet)"
+	case models.OutcomeComplete:
+		switch {
+		case run.PRURL != "" && swarm:
+			return "all hard gates pass, PR opened"
+		case swarm:
+			return "all hard gates pass (no PR yet)"
+		case run.PRURL != "":
+			return "Fix found, tests pass, PR opened"
+		}
 		return "Fix found, tests pass (no PR yet)"
-	default:
-		return "No passing fix found"
 	}
+	return "No passing fix found"
 }
 
 // BuildRepoRunMessage is the Block Kit completion card for a repo run: repo,
@@ -205,7 +220,7 @@ func (s *SlackNotifier) BuildRepoRunMessage(run *models.Run, runURL string) map[
 	return map[string]any{
 		"text": fmt.Sprintf("PatchLoop: %s - %s", run.Repo, RepoResultText(run)),
 		"blocks": []map[string]any{
-			{"type": "header", "text": map[string]any{"type": "plain_text", "text": "PatchLoop " + map[bool]string{true: "fix ready", false: "finished"}[run.Solved]}},
+			{"type": "header", "text": map[string]any{"type": "plain_text", "text": "PatchLoop " + map[bool]string{true: "fix ready", false: "finished"}[run.HasPatch()] + " (" + OutcomeLabel(runOutcome(run)) + ")"}},
 			{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": "*" + RepoResultText(run) + "*\n>" + slackEscape(truncate(run.Task, 280))}},
 			{"type": "section", "fields": []map[string]any{
 				{"type": "mrkdwn", "text": "*Repo*\n" + slackEscape(run.Repo) + " @ " + slackEscape(run.Branch)},

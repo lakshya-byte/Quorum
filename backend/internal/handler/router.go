@@ -73,6 +73,9 @@ func NewRouter(authHandler *AuthHandler, cfg RouterConfig) *gin.Engine {
 		authed.GET("/runs/:id/pr", cfg.Runs.GetPR)
 		authed.POST("/runs/:id/merge", cfg.Runs.Merge)
 		authed.POST("/runs/:id/followup", cfg.Runs.Followup)
+		authed.POST("/runs/:id/answers", cfg.Runs.Answers)
+		authed.GET("/runs/:id/artifacts", cfg.Runs.Artifacts)
+		authed.GET("/runs/:id/artifacts/:artifactId", cfg.Runs.Artifact)
 		authed.POST("/tasks", cfg.Runs.CreateTask)
 
 		demo := r.Group("/api/demo")

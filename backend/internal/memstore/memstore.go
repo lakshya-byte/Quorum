@@ -66,6 +66,7 @@ func (s *Store) ListByUser(ctx context.Context, userID string, limit int64) ([]m
 		if r := s.runs[s.order[i]]; r.UserID == userID {
 			c := clone(r)
 			c.Nodes = nil
+			c.Plan = nil
 			out = append(out, *c)
 		}
 	}

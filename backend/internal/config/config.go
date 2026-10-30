@@ -59,7 +59,11 @@ type Config struct {
 	DemoChecksDelaySec    int // fake CI of demo PRs is "pending" this long (merge is refused meanwhile)
 	LiveRunsPerUserPerDay int
 	GuestRunsPerHour      int
-	TrustedProxies        []string
+	// Ceilings for the per-task swarm limits a client may ask for (CONTRACT-V3); the agent clamps again.
+	SwarmMaxWorkersCap int
+	SwarmMaxTokensCap  int
+	SwarmMaxWallSCap   int
+	TrustedProxies     []string
 
 	// Observability (both optional; New Relic is a no-op when the key is unset).
 	NewRelicLicenseKey string
@@ -127,6 +131,9 @@ func Load() *Config {
 		DemoChecksDelaySec:    getEnvInt("DEMO_CHECKS_PENDING_SEC", 4),
 		LiveRunsPerUserPerDay: getEnvInt("LIVE_RUNS_PER_USER_PER_DAY", 10),
 		GuestRunsPerHour:      getEnvInt("GUEST_RUNS_PER_HOUR", 3),
+		SwarmMaxWorkersCap:    getEnvInt("SWARM_MAX_WORKERS_CAP", 8),
+		SwarmMaxTokensCap:     getEnvInt("SWARM_MAX_TOKENS_CAP", 2000000),
+		SwarmMaxWallSCap:      getEnvInt("SWARM_MAX_WALL_S_CAP", 3600),
 		TrustedProxies:        splitList(os.Getenv("TRUSTED_PROXIES")),
 
 		NewRelicLicenseKey: os.Getenv("NEW_RELIC_LICENSE_KEY"),

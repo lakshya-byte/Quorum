@@ -57,6 +57,8 @@ func EnsureIndexes(ctx context.Context, database *mongo.Database) error {
 		{"runs", mongo.IndexModel{Keys: bson.D{{Key: "slack.channel", Value: 1}, {Key: "slack.thread_ts", Value: 1}}}},
 		{"runs", mongo.IndexModel{Keys: bson.D{{Key: "repo", Value: 1}, {Key: "pr_number", Value: 1}}}},
 		{"runs", mongo.IndexModel{Keys: bson.D{{Key: "parent_run_id", Value: 1}}}},
+		{"runs", mongo.IndexModel{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "task_type", Value: 1}, {Key: "created_at", Value: -1}}}},
+		{"runs", mongo.IndexModel{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "outcome", Value: 1}, {Key: "created_at", Value: -1}}}},
 		{"github_connections", mongo.IndexModel{Keys: bson.D{{Key: "user_id", Value: 1}}, Options: options.Index().SetUnique(true)}},
 		{"github_connections", mongo.IndexModel{Keys: bson.D{{Key: "installation_id", Value: 1}}}},
 		{"slack_settings", mongo.IndexModel{Keys: bson.D{{Key: "user_id", Value: 1}}, Options: options.Index().SetUnique(true)}},

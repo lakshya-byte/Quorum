@@ -27,6 +27,13 @@ type repoRun struct {
 	prURL, prBranch                string
 	prNumber                       int
 	crash                          bool
+
+	// Swarm (CONTRACT-V3).
+	taskType  string // as requested: auto or a concrete type
+	strict    []string
+	limits    map[string]any
+	answers   map[string]any
+	artifacts []fakeArtifact
 }
 
 func (r *repoRun) append(ev event) {
@@ -83,9 +90,20 @@ func (a *Agent) createRepoRun(w http.ResponseWriter, r *http.Request) {
 			Branch   string `json:"branch"`
 		} `json:"repo"`
 		Followup map[string]any `json:"followup"`
+		TaskType string         `json:"task_type"`
+		Strict   []string       `json:"strict"`
+		Limits   map[string]any `json:"limits"`
+		Answers  map[string]any `json:"answers"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, 422, map[string]any{"detail": "bad body"})
+		return
+	}
+	if body.TaskType == "" {
+		body.TaskType = "auto"
+	}
+	if !knownTypes[body.TaskType] {
+		writeJSON(w, 422, map[string]any{"detail": "unknown task_type: " + body.TaskType})
 		return
 	}
 	if strings.TrimSpace(body.Task) == "" || body.Repo.FullName == "" {
@@ -106,8 +124,9 @@ func (a *Agent) createRepoRun(w http.ResponseWriter, r *http.Request) {
 	rr := &repoRun{
 		id: id, repo: body.Repo.FullName, branch: body.Repo.Branch, task: body.Task, source: body.Source,
 		autoPR: body.AutoPR, demo: demo, hasToken: hasToken, followup: body.Followup, wake: make(chan struct{}),
-		solved: !strings.Contains(strings.ToLower(body.Task), "unsolvable"),
-		crash:  strings.Contains(strings.ToLower(body.Task), "crashagent"),
+		solved:   !strings.Contains(strings.ToLower(body.Task), "unsolvable"),
+		crash:    strings.Contains(strings.ToLower(body.Task), "crashagent"),
+		taskType: body.TaskType, strict: body.Strict, limits: body.Limits, answers: body.Answers,
 	}
 	a.mu.Lock()
 	a.runs[id] = runInfo{BugID: body.Repo.FullName, UserID: body.UserID, Mode: "fake", Engine: engine}
@@ -116,7 +135,8 @@ func (a *Agent) createRepoRun(w http.ResponseWriter, r *http.Request) {
 	seq := a.prSeq
 	created := map[string]any{"repo": body.Repo.FullName, "branch": body.Repo.Branch, "task": body.Task, "user_id": body.UserID,
 		"engine": body.Engine, "auto_pr": body.AutoPR, "run_url": body.RunURL, "source": body.Source,
-		"has_token": hasToken, "followup": body.Followup}
+		"has_token": hasToken, "followup": body.Followup,
+		"task_type": body.TaskType, "strict": body.Strict, "limits": body.Limits, "answers": body.Answers}
 	if body.IssueRef != nil {
 		created["issue_ref"] = *body.IssueRef
 	}
@@ -154,17 +174,110 @@ func repoNodes(solved bool, repo string) []map[string]any {
 	return ns
 }
 
+var knownTypes = map[string]bool{"auto": true, "bugfix": true, "feature": true, "refactor": true, "ui": true,
+	"tests": true, "perf": true, "deps": true, "docs": true, "migration": true, "other": true}
+
 func (a *Agent) executeRepoRun(rr *repoRun, engine, userID, runURL string) {
-	ns := repoNodes(rr.solved, rr.repo)
 	delay := a.opts.Delay
-	emit := func(typ string, data map[string]any) {
+	stamp := func(typ string, data map[string]any) {
 		if data == nil {
 			data = map[string]any{}
 		}
 		data["ts_ms"] = float64(time.Now().UnixNano()) / 1e6
 		rr.append(event{Type: typ, Data: data})
+	}
+	emit := func(typ string, data map[string]any) {
+		stamp(typ, data)
 		time.Sleep(delay)
 	}
+	fast := func(typ string, data map[string]any) {
+		stamp(typ, data)
+		time.Sleep(delay / 4)
+	}
+
+	resolved, source := rr.taskType, "user"
+	if resolved == "auto" {
+		resolved, source = inferType(rr.task), "auto"
+	}
+
+	// A vague task without answers: the planner asks instead of guessing.
+	if has(rr.task, "vague") && rr.answers == nil && rr.followup == nil {
+		a.executeNeedsInput(rr, engine, userID, emit)
+		return
+	}
+	if resolved != "bugfix" {
+		a.finishSwarm(rr, resolved, source, engine, userID, emit, fast)
+		return
+	}
+	a.executeLegacy(rr, engine, userID, emit)
+}
+
+// executeNeedsInput: clarify event, then done{outcome:needs_input}.
+func (a *Agent) executeNeedsInput(rr *repoRun, engine, userID string, emit func(string, map[string]any)) {
+	emit("run_started", map[string]any{"run_id": rr.id, "bug_id": rr.repo, "mode": "fake", "engine": engine, "kind": "repo"})
+	emit("repo", map[string]any{"full_name": rr.repo, "branch": rr.branch, "files": 14, "language": "python", "test_command": "python -m unittest", "truncated": false})
+	emit("guard", map[string]any{"stage": "input", "verdict": "pass", "reasons": []string{}, "latency_ms": 12})
+	questions := []map[string]any{
+		{"id": "q1", "text": "Which part of the app should change (a file, page or module)?"},
+		{"id": "q2", "text": "How will you know it is done? Describe one observable result."},
+	}
+	emit("clarify", map[string]any{"questions": questions})
+	usage := map[string]any{"prompt_tokens": 410, "completion_tokens": 90}
+	emit("done", map[string]any{"solved": false, "outcome": "needs_input", "task_type": rr.taskType, "best": nil, "usage": usage,
+		"latency_ms": 900, "time_to_first_event_ms": 120, "agents": map[string]any{"spawned": 1, "peak_parallel": 1}})
+	rr.append(event{Type: "end"})
+	rr.finish()
+	qs := make([]any, 0, len(questions))
+	for _, q := range questions {
+		qs = append(qs, q)
+	}
+	a.sendCallback(rr, userID, map[string]any{
+		"solved": false, "outcome": "needs_input", "task_type": rr.taskType, "best_node_id": nil, "nodes": []any{},
+		"usage": usage, "latency_ms": 900, "questions": qs,
+		"agents": map[string]any{"spawned": 1, "peak_parallel": 1},
+	})
+}
+
+// finishSwarm runs the scripted swarm and reports it.
+func (a *Agent) finishSwarm(rr *repoRun, taskType, source, engine, userID string, emit, fast func(string, map[string]any)) {
+	res := a.executeSwarm(rr, taskType, source, engine, emit, fast)
+	emit("guard", map[string]any{"stage": "output", "verdict": "pass", "reasons": []string{}, "latency_ms": 9})
+	usage := map[string]any{"prompt_tokens": res.tokens * 3 / 4, "completion_tokens": res.tokens / 4}
+	node := res.node()
+	solved := res.outcome == "complete"
+	emit("done", map[string]any{"solved": solved, "outcome": res.outcome, "task_type": taskType, "best": node,
+		"criteria": res.criteria(), "usage": usage, "safety": map[string]any{"policy": map[string]any{"ok": true}},
+		"latency_ms": 4200, "time_to_first_event_ms": 150, "agents": res.agents()})
+
+	prURL, commits := "", res.units
+	if rr.followup != nil {
+		commits = 1
+	}
+	if (res.outcome == "complete" || res.outcome == "partial") && (rr.autoPR || rr.followup != nil) {
+		prURL = rr.prURL
+		emit("pr", map[string]any{"url": rr.prURL, "branch": rr.prBranch, "number": rr.prNumber, "fake": true, "updated": rr.followup != nil, "commits": commits})
+	}
+	rr.append(event{Type: "end"})
+	rr.finish()
+
+	idx := make([]any, 0, len(res.artifacts))
+	for _, f := range res.artifacts {
+		idx = append(idx, f.index())
+	}
+	extra := map[string]any{
+		"solved": solved, "outcome": res.outcome, "task_type": taskType, "best_node_id": 0, "nodes": []any{node},
+		"usage": usage, "latency_ms": 4200, "files_changed": len(res.files),
+		"criteria": res.criteria(), "agents": res.agents(), "plan": res.plan, "artifacts": idx,
+	}
+	if prURL != "" {
+		extra["pr_url"], extra["pr_number"], extra["pr_branch"] = prURL, rr.prNumber, rr.prBranch
+	}
+	a.sendCallback(rr, userID, extra)
+}
+
+// executeLegacy is the cheap bug-fix stream (the pre-swarm event set).
+func (a *Agent) executeLegacy(rr *repoRun, engine, userID string, emit func(string, map[string]any)) {
+	ns := repoNodes(rr.solved, rr.repo)
 	emit("run_started", map[string]any{"run_id": rr.id, "bug_id": rr.repo, "mode": "fake", "engine": engine, "kind": "repo"})
 	emit("repo", map[string]any{"full_name": rr.repo, "branch": rr.branch, "files": 14, "language": "python", "test_command": "python -m unittest", "truncated": false})
 	emit("guard", map[string]any{"stage": "input", "verdict": "pass", "reasons": []string{}, "latency_ms": 12})
@@ -190,19 +303,33 @@ func (a *Agent) executeRepoRun(rr *repoRun, engine, userID, runURL string) {
 	}
 	emit("guard", map[string]any{"stage": "output", "verdict": "pass", "reasons": []string{}, "latency_ms": 9})
 	usage := map[string]any{"prompt_tokens": 3120, "completion_tokens": 880}
-	emit("done", map[string]any{"solved": rr.solved, "best": ns[4], "usage": usage, "latency_ms": 4200})
+	outcome := "failed"
+	if rr.solved {
+		outcome = "complete"
+	}
+	emit("done", map[string]any{"solved": rr.solved, "outcome": outcome, "task_type": "bugfix", "best": ns[4], "usage": usage, "latency_ms": 4200,
+		"agents": map[string]any{"spawned": 3, "peak_parallel": 3}})
 
 	prURL := ""
 	if rr.solved && (rr.autoPR || rr.followup != nil) {
 		prURL = rr.prURL
-		emit("pr", map[string]any{"url": rr.prURL, "branch": rr.prBranch, "number": rr.prNumber, "fake": true, "updated": rr.followup != nil})
+		emit("pr", map[string]any{"url": rr.prURL, "branch": rr.prBranch, "number": rr.prNumber, "fake": true, "updated": rr.followup != nil, "commits": 1})
 	}
 	rr.append(event{Type: "end"})
 	rr.finish()
-	a.repoCallback(rr, userID, ns, prURL, usage)
+	extra := map[string]any{
+		"solved": rr.solved, "outcome": outcome, "task_type": "bugfix", "best_node_id": 4, "nodes": ns, "usage": usage, "latency_ms": 4200,
+		"files_changed": 1, // the real agent reports a count
+		"safety":        map[string]any{"policy": map[string]any{"ok": true}, "security": map[string]any{"tool": "bandit", "new_findings": 0}, "guard": map[string]any{"input": "pass", "output": "pass"}},
+	}
+	if prURL != "" {
+		extra["pr_url"], extra["pr_number"], extra["pr_branch"] = prURL, rr.prNumber, rr.prBranch
+	}
+	a.sendCallback(rr, userID, extra)
 }
 
-func (a *Agent) repoCallback(rr *repoRun, userID string, ns []map[string]any, prURL string, usage map[string]any) {
+// sendCallback posts the completion callback to the backend (when configured).
+func (a *Agent) sendCallback(rr *repoRun, userID string, extra map[string]any) {
 	a.mu.Lock()
 	cb := a.opts.CallbackURL
 	a.mu.Unlock()
@@ -211,12 +338,10 @@ func (a *Agent) repoCallback(rr *repoRun, userID string, ns []map[string]any, pr
 	}
 	payload := map[string]any{
 		"run_id": rr.id, "user_id": userID, "bug_id": rr.repo, "kind": "repo", "repo": rr.repo, "branch": rr.branch, "task": rr.task,
-		"mode": "fake", "engine": "graph", "solved": rr.solved, "best_node_id": 4, "nodes": ns, "usage": usage, "latency_ms": 4200,
-		"files_changed": 1, // the real agent reports a count
-		"safety":        map[string]any{"policy": map[string]any{"ok": true}, "security": map[string]any{"tool": "bandit", "new_findings": 0}, "guard": map[string]any{"input": "pass", "output": "pass"}},
+		"mode": "fake", "engine": "graph",
 	}
-	if prURL != "" {
-		payload["pr_url"], payload["pr_number"], payload["pr_branch"] = prURL, rr.prNumber, rr.prBranch
+	for k, v := range extra {
+		payload[k] = v
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(cb, "/")+"/internal/runs/"+rr.id+"/complete", bytes.NewReader(body))
