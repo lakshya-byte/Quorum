@@ -390,9 +390,13 @@ def _finalize(trace: Trace, rec: _Recorder, run: Any, originals: dict[str, str],
     trace.final_stage = _stage_of(trace, errors)
     trace.evidence = _evidence(trace)
     pol = [c for c in trace.candidates if not c["baseline"]]
-    trace.policy_verdict = "block" if pol and any(not c["policy"]["ok"] for c in pol) else ("pass" if pol else "n/a")
-    trace.security_verdict = "block" if any(not c["security"]["ok"] for c in pol) else (
-        "pass" if any(c["security"].get("scanned") for c in pol) else "n/a")
+    best_c = trace.best
+    trace.meta["policy_blocked_candidates"] = sum(1 for c in pol if not c["policy"]["ok"])
+    trace.meta["security_blocked_candidates"] = sum(1 for c in pol if not c["security"]["ok"])
+    # verdicts describe the candidate the system would ship (the best one); blocked siblings are counted in meta
+    trace.policy_verdict = ("pass" if best_c["policy"]["ok"] else "block") if best_c and not best_c["baseline"] else "n/a"
+    trace.security_verdict = (("pass" if best_c["security"]["ok"] else "block")
+                             if best_c and not best_c["baseline"] and best_c["security"].get("scanned", True) else "n/a")
     return trace
 
 
