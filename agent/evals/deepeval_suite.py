@@ -101,9 +101,10 @@ def _base_metric_cls() -> type:
     class DeterministicMetric(BaseMetric):
         """Wraps one deterministic PatchLoop metric as a DeepEval metric (runs offline, no judge)."""
 
-        def __init__(self, name: str, res: MetricResult) -> None:
-            self._pl_name = name
-            self._pl_result = res
+        def __init__(self, name: str = "metric", res: MetricResult | None = None) -> None:
+            res = res or MetricResult(name, None, None, None, "")
+            self._pl_name = self.name = name  # deepeval re-creates metrics from attributes named like the init args
+            self._pl_result = self.res = res
             self.threshold = res.threshold if res.threshold is not None else 0.5
             self.async_mode = False
             self.evaluation_model = "deterministic (no LLM)"

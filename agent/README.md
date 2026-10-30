@@ -251,3 +251,18 @@ These hosts are blocked there, so all of these ran only in fake mode: Nebius LLM
 (`api.tokenfactory.nebius.com`, `NEBIUS_API_KEY`), LangSmith (`api.smith.langchain.com`,
 `LANGSMITH_API_KEY`), New Relic (`collector.newrelic.com`, `NEW_RELIC_LICENSE_KEY`), the NVIDIA guard
 backend (`integrate.api.nvidia.com`, `NVIDIA_API_KEY`), live latency budgets, and the hard-tier calibration.
+
+
+## Evals
+
+A full eval pipeline lives in `evals/` (see `evals/README.md`): a 30-case golden dataset derived from the bundled bugs and demo repos,
+an offline integrity proof, deterministic metrics, DeepEval and Ragas layers, a regression gate and a Streamlit UI.
+
+```bash
+pip install -r requirements.txt -r requirements-evals.txt
+python -m evals.run                 # fake mode: scripted agents, validates the harness (not model quality)
+python -m evals.run validate        # dataset schema + integrity proof
+scripts/eval-app.sh                 # Streamlit UI on :8501
+python -m evals.run --mode hybrid --judge nebius   # real Nemotron + judge (EVAL_JUDGE_MODEL, NEBIUS_API_KEY); refuses if unreachable
+```
+`scripts/eval.py` remains the quick per-bug solve-rate table.

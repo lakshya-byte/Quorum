@@ -326,7 +326,7 @@ def build_cases() -> list[dict[str, Any]]:
                 "Does not return test files, README or unrelated modules."]))
     cases.append(case(
         "loc-wordstats-distractor", "locator_retrieval", "hard", "Report and counter are distractors for a tokenizer bug",
-        ["locator", "distractor", "downstream"],
+        ["locator", "distractor", "downstream", "known-gap-heuristic"],
         task="the word report prints 'The' and 'the' as two different rows, and don't shows up as don and t. "
              "report is wrong", repo="demo/wordstats", source="cli", expected=loc_expected(demo["wordstats"]),
         reference=loc_ref("demo/wordstats", demo["wordstats"]),
@@ -582,6 +582,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {SCHEMA_PATH}")
         return 0
     data = build()
+    builtin_ids = {c["id"] for c in data["cases"]}
+    custom = []
+    if GOLDEN_PATH.is_file():  # cases added through the Streamlit editor / by hand survive a rebuild
+        try:
+            old = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+            custom = [c for c in old.get("cases", []) if c.get("id") not in builtin_ids
+                      and c.get("metadata", {}).get("author", "patchloop-evals") != "patchloop-evals"]
+        except ValueError:
+            pass
+    data["cases"] = data["cases"] + custom
     ds = parse_dataset(data)
     errs = semantic_errors(ds)
     if errs:

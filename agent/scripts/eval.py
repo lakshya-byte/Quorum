@@ -6,6 +6,8 @@ Usage:
 - single: one proposer call (round 1, Nano, first strategy), tested once. The baseline to beat.
 - loop:   the beam-search loop engine.
 - graph:  the LangGraph team engine.
+For the full pipeline (golden dataset, DeepEval, Ragas, regression gate, Streamlit UI) use `python -m evals.run`
+(see evals/README.md); this script stays as the quick per-bug solve-rate table.
 Without --live everything is fake (scripted agents, local sandbox): numbers only prove the harness works.
 --live needs NEBIUS_API_KEY + MODEL_NANO and api.tokenfactory.nebius.com reachable; it checks first and
 exits if not (it never substitutes fake numbers). Results go to evals/results/*.json. With
