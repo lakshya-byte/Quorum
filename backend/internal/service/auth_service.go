@@ -6,7 +6,7 @@ import (
 
 	"patchloop-backend/internal/dto"
 	"patchloop-backend/internal/models"
-	"patchloop-backend/internal/observability"
+	// "patchloop-backend/internal/observability"
 	"patchloop-backend/internal/pkg/hash"
 	pkgjwt "patchloop-backend/internal/pkg/jwt"
 	"patchloop-backend/internal/pkg/otp"
@@ -73,7 +73,7 @@ func (s *AuthService) Signup(ctx context.Context, req dto.SignupRequest) (*model
 		Email:         req.Email,
 		PasswordHash:  passwordHash,
 		CompanyName:   req.CompanyName,
-		EmailVerified: false,
+		EmailVerified: true, // email verification disabled for now; set back to false to re-enable
 	}
 
 	if err := s.users.Create(ctx, user); err != nil {
@@ -83,9 +83,9 @@ func (s *AuthService) Signup(ctx context.Context, req dto.SignupRequest) (*model
 		return nil, err
 	}
 
-	if err := s.issueAndSendOTP(ctx, user); err != nil {
-		return nil, err
-	}
+	// if err := s.issueAndSendOTP(ctx, user); err != nil {
+	// 	return nil, err
+	// }
 
 	return user, nil
 }
@@ -119,10 +119,10 @@ func (s *AuthService) issueAndSendOTP(ctx context.Context, user *models.User) er
 	// The OTP is persisted regardless of mail delivery, so a transient
 	// provider failure doesn't strand the account — the user can retry via
 	// resend-otp instead of losing the signup entirely.
-	if err := s.mailer.SendOTPEmail(user.Email, code); err != nil {
-		// Never log the email address; the user id is enough to correlate.
-		observability.L(ctx).Error("failed to send OTP email", "user_id", user.ID.Hex(), "error", err.Error())
-	}
+	// if err := s.mailer.SendOTPEmail(user.Email, code); err != nil {
+	// 	// Never log the email address; the user id is enough to correlate.
+	// 	observability.L(ctx).Error("failed to send OTP email", "user_id", user.ID.Hex(), "error", err.Error())
+	// }
 
 	return nil
 }
@@ -203,9 +203,9 @@ func (s *AuthService) Login(ctx context.Context, req dto.LoginRequest) (*models.
 		return nil, nil, ErrInvalidCredentials
 	}
 
-	if !user.EmailVerified {
-		return nil, nil, ErrEmailNotVerified
-	}
+	// if !user.EmailVerified {
+	// 	return nil, nil, ErrEmailNotVerified
+	// }
 
 	pair, err := s.issueTokenPair(ctx, user)
 	if err != nil {

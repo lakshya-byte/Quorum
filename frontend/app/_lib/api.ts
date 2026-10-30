@@ -1,5 +1,5 @@
-// Thin client for the PatchLoop backend. Cookies carry the session, so every
-// call uses credentials: "include". A 401 triggers one refresh attempt.
+// Thin client for the PatchLoop backend. Clerk owns the session; every call
+// sends the current Clerk session token as "Authorization: Bearer ...".
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080").replace(/\/$/, "");
 
@@ -140,9 +140,20 @@ export class ApiError extends Error {
   }
 }
 
+/** Clerk session token for the API (null when signed out or Clerk has not loaded). */
+export async function getAuthToken(): Promise<string | null> {
+  if (typeof window === "undefined") return null;
+  try {
+    return (await (window as unknown as { Clerk?: { session?: { getToken: () => Promise<string | null> } } }).Clerk?.session?.getToken()) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/* Cookie-session refresh, replaced by Clerk (it refreshes its own tokens):
 let refreshing: Promise<boolean> | null = null;
 
-/** POST /api/auth/refresh once; concurrent callers share the same attempt. */
+// POST /api/auth/refresh once; concurrent callers share the same attempt.
 export function refreshSession(): Promise<boolean> {
   if (!refreshing) {
     refreshing = fetch(`${API_URL}/api/auth/refresh`, { method: "POST", credentials: "include" })
@@ -156,23 +167,28 @@ export function refreshSession(): Promise<boolean> {
 }
 
 const NO_REFRESH = ["/api/auth/login", "/api/auth/signup", "/api/auth/verify-otp", "/api/auth/resend-otp", "/api/auth/refresh", "/api/auth/logout"];
+*/
 
-export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}, retried = false): Promise<T> {
+export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
   const { json, headers, ...rest } = init;
+  const token = await getAuthToken();
   let res: Response;
   try {
     res = await fetch(`${API_URL}${path}`, {
       ...rest,
-      credentials: "include",
-      headers: { ...(json !== undefined ? { "Content-Type": "application/json" } : {}), ...headers },
+      headers: {
+        ...(json !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...headers,
+      },
       body: json !== undefined ? JSON.stringify(json) : rest.body,
     });
   } catch {
     throw new ApiError(0, `Cannot reach the PatchLoop API at ${API_URL}. Is the backend running?`);
   }
-  if (res.status === 401 && !retried && !NO_REFRESH.includes(path)) {
-    if (await refreshSession()) return api<T>(path, init, true);
-  }
+  // if (res.status === 401 && !retried && !NO_REFRESH.includes(path)) {
+  //   if (await refreshSession()) return api<T>(path, init, true);
+  // }
   const text = await res.text();
   let body: unknown = null;
   if (text) {
@@ -256,10 +272,11 @@ export const prApi = {
 
 export const notificationsApi = {
   // The backend answers {notifications, unread}; a bare array (older mock) is accepted too.
-  list: async (): Promise<Notification[]> => {
-    const r = await api<{ notifications?: Notification[] | null } | Notification[] | null>("/api/notifications");
-    if (Array.isArray(r)) return r;
-    return r?.notifications || [];
+  list: async (): Promise<{ notifications: Notification[]; unread: number }> => {
+    const r = await api<{ notifications?: Notification[] | null; unread?: number } | Notification[] | null>("/api/notifications");
+    if (Array.isArray(r)) return { notifications: r, unread: r.filter((n) => !n.read).length };
+    const notifications = r?.notifications || [];
+    return { notifications, unread: r?.unread ?? notifications.filter((n) => !n.read).length };
   },
   read: (id: string) => api<unknown>(`/api/notifications/${encodeURIComponent(id)}/read`, { method: "POST" }),
 };

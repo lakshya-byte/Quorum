@@ -25,7 +25,8 @@ type RouterConfig struct {
 	Webhooks  *WebhookHandler
 	Tokens    *TokenHandler
 	TokenAuth middleware.TokenAuthenticator
-	DevMailer *service.Mailer // non-nil only when DEV_MODE=true
+	ClerkAuth middleware.TokenAuthenticator // Clerk session tokens (browser)
+	DevMailer *service.Mailer               // non-nil only when DEV_MODE=true
 }
 
 func NewRouter(authHandler *AuthHandler, cfg RouterConfig) *gin.Engine {
@@ -47,21 +48,17 @@ func NewRouter(authHandler *AuthHandler, cfg RouterConfig) *gin.Engine {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	var requireAuth gin.HandlerFunc
-	if cfg.TokenAuth != nil {
-		requireAuth = middleware.RequireAuth(cfg.AccessSecret, cfg.TokenAuth)
-	} else {
-		requireAuth = middleware.RequireAuth(cfg.AccessSecret)
-	}
+	requireAuth := middleware.RequireAuth(cfg.TokenAuth, cfg.ClerkAuth)
 
 	api := r.Group("/api/auth")
 	{
-		api.POST("/signup", authHandler.Signup)
-		api.POST("/verify-otp", authHandler.VerifyOTP)
-		api.POST("/resend-otp", authHandler.ResendOTP)
-		api.POST("/login", authHandler.Login)
-		api.POST("/refresh", authHandler.Refresh)
-		api.POST("/logout", authHandler.Logout)
+		// Replaced by Clerk (sign-up, sign-in, sessions and email verification live there):
+		// api.POST("/signup", authHandler.Signup)
+		// api.POST("/verify-otp", authHandler.VerifyOTP)
+		// api.POST("/resend-otp", authHandler.ResendOTP)
+		// api.POST("/login", authHandler.Login)
+		// api.POST("/refresh", authHandler.Refresh)
+		// api.POST("/logout", authHandler.Logout)
 		api.GET("/me", requireAuth, authHandler.Me)
 	}
 

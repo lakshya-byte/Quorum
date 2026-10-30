@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { useAuth as useClerkAuth, useClerk } from "@clerk/nextjs";
 import { authApi, type User } from "./api";
 import { PageSkeleton } from "../_ui";
 
@@ -14,10 +15,16 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+/**
+ * Clerk owns the session. Once Clerk says we are signed in, /api/auth/me
+ * returns the PatchLoop user (created on first call), which the rest of the
+ * app reads through useAuth() exactly as before.
+ */
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const { isLoaded, isSignedIn } = useClerkAuth();
+  const clerk = useClerk();
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const router = useRouter();
+  const [loaded, setLoaded] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -26,26 +33,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       setUser(null);
     } finally {
-      setLoading(false);
+      setLoaded(true);
     }
   }, []);
 
   const signOut = useCallback(async () => {
-    try {
-      await authApi.logout();
-    } catch {
-      // Cookies are cleared server-side; ignore network errors here.
-    }
     setUser(null);
-    router.push("/signin");
-  }, [router]);
+    await clerk.signOut({ redirectUrl: "/signin" });
+  }, [clerk]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial session check
+    if (!isLoaded) return;
+    if (!isSignedIn) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync with Clerk session
+      setUser(null);
+      setLoaded(true);
+      return;
+    }
     reload();
-  }, [reload]);
+  }, [isLoaded, isSignedIn, reload]);
 
-  const value = useMemo(() => ({ user, loading, reload, signOut }), [user, loading, reload, signOut]);
+  const loading = !isLoaded || (isSignedIn && !loaded);
+  const value = useMemo(() => ({ user, loading: !!loading, reload, signOut }), [user, loading, reload, signOut]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

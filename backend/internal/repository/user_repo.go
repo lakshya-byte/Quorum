@@ -68,3 +68,23 @@ func (r *UserRepository) MarkEmailVerified(ctx context.Context, id bson.ObjectID
 	)
 	return err
 }
+
+func (r *UserRepository) FindByClerkID(ctx context.Context, clerkID string) (*models.User, error) {
+	var user models.User
+	err := r.col.FindOne(ctx, bson.M{"clerk_id": clerkID}).Decode(&user)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (r *UserRepository) SetClerkID(ctx context.Context, id bson.ObjectID, clerkID string) error {
+	_, err := r.col.UpdateOne(ctx,
+		bson.M{"_id": id},
+		bson.M{"$set": bson.M{"clerk_id": clerkID, "email_verified": true, "updated_at": time.Now().UTC()}},
+	)
+	return err
+}

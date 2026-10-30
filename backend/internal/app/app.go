@@ -9,6 +9,7 @@ import (
 	"patchloop-backend/internal/config"
 	"patchloop-backend/internal/handler"
 	"patchloop-backend/internal/middleware"
+	"patchloop-backend/internal/pkg/clerk"
 	"patchloop-backend/internal/pkg/crypt"
 	"patchloop-backend/internal/pkg/ratelimit"
 	"patchloop-backend/internal/repository"
@@ -45,6 +46,7 @@ type Stores struct {
 type Auth struct {
 	Handler   *handler.AuthHandler
 	TokenAuth middleware.TokenAuthenticator
+	ClerkAuth middleware.TokenAuthenticator // nil disables browser (Clerk) sessions
 	Mailer    *service.Mailer
 }
 
@@ -76,7 +78,7 @@ func New(cfg *config.Config, database *mongo.Database, nr *newrelic.Application)
 		Slack:         repository.NewSlackRepository(database),
 		Notifications: repository.NewNotificationRepository(database),
 		Dedupe:        repository.NewDedupeRepository(database),
-	}, Auth{Handler: authHandler, TokenAuth: middleware.TokenAuthenticator(tokenService), Mailer: mailer}, nr, handler.NewTokenHandler(tokenService))
+	}, Auth{Handler: authHandler, TokenAuth: middleware.TokenAuthenticator(tokenService), ClerkAuth: service.NewClerkAuth(clerk.New(cfg.ClerkSecretKey, cfg.ClerkAPIURL), userRepo), Mailer: mailer}, nr, handler.NewTokenHandler(tokenService))
 	return a
 }
 
@@ -166,6 +168,7 @@ func Build(cfg *config.Config, st Stores, auth Auth, nr *newrelic.Application, t
 		Webhooks:       handler.NewWebhookHandler(ghWebhook, slackApp),
 		Tokens:         tokens,
 		TokenAuth:      auth.TokenAuth,
+		ClerkAuth:      auth.ClerkAuth,
 		DevMailer:      devMailer,
 	})
 
