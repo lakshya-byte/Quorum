@@ -257,6 +257,8 @@ def diff_surface(before: Surface, after: Surface | None) -> list[str]:
                         problems.append(f"removed field `{name}.{f}`")
                 if old["external_bases"] != new["external_bases"]:
                     problems.append(f"changed bases of `{name}`")
+            elif old.get("kind") == "function" and new.get("kind") == "function":
+                problems.append(f"changed signature of `{name}`: {old['sig']} -> {new['sig']}")
             else:
                 problems.append(f"changed `{name}`: {old.get('sig') or old.get('kind')} -> {new.get('sig') or new.get('kind')}")
     return problems

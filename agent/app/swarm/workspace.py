@@ -175,7 +175,7 @@ def sanitized_env(home: str, root: str, *, with_proxy: bool, extra: dict[str, st
         "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": root, "PYTHONUNBUFFERED": "1",
         "npm_config_cache": str(CACHE_DIR / "npm-cache"), "npm_config_update_notifier": "false",
         "npm_config_fund": "false", "npm_config_audit": "false", "npm_config_progress": "false",
-        "NO_COLOR": "1", "FORCE_COLOR": "0",
+        "NO_COLOR": "1",
         "GOCACHE": str(CACHE_DIR / "go-build"), "GOPATH": str(CACHE_DIR / "gopath"),
         "CARGO_HOME": str(CACHE_DIR / "cargo"), "CARGO_TARGET_DIR": os.path.join(home, "cargo-target"),
     }
@@ -496,6 +496,10 @@ class LocalWorkspace(_BaseWorkspace):
             argv[0] = sys.executable
         env = sanitized_env(self._home, self.root, with_proxy=is_install(step))
         os.makedirs(env["npm_config_cache"], exist_ok=True)
+        # bytecode caches live outside the tree and die with the step: a stale .pyc (same size + mtime second)
+        # must never mask an edit, and compileall must not leave files behind in forks
+        pyc = tempfile.mkdtemp(prefix="pyc-", dir=self._parent)
+        env["PYTHONPYCACHEPREFIX"] = pyc
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv, cwd=cwd, env=env, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
@@ -520,6 +524,8 @@ class LocalWorkspace(_BaseWorkspace):
         except asyncio.CancelledError:
             kill_group()
             raise
+        finally:
+            shutil.rmtree(pyc, ignore_errors=True)
         kill_group()  # reap stray children (dev servers, watchers) that outlived the command
         return proc.returncode or 0, out.decode("utf-8", errors="replace")
 

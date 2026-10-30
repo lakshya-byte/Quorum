@@ -11,7 +11,7 @@ _UNITTEST_FAILED_IMPORT = re.compile(r"^(?:ERROR|FAIL): (\S+) \((unittest\.loade
 _PYTEST = re.compile(r"^(?P<id>[^\s:]+(?:/[^\s:]+)*\.py::\S.*?)\s+(?P<st>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b", re.M)
 _PYTEST_SUMMARY = re.compile(r"^(?P<st>PASSED|FAILED|ERROR|SKIPPED) (?P<id>\S+\.py::\S+)", re.M)
 _GO = re.compile(r"^\s*--- (?P<st>PASS|FAIL|SKIP): (?P<name>\S+)", re.M)
-_GO_PKG = re.compile(r"^(?:ok|FAIL|---)\s+(\S+)\s", re.M)
+_GO_PKG = re.compile(r"^(?:ok|FAIL)[ \t]+(\S+)[ \t]", re.M)
 
 
 def _status(word: str) -> str:

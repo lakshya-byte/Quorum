@@ -323,7 +323,8 @@ def analyse_python(path: str, text: str) -> tuple[list[Symbol], list[FuncMetric]
             imports += [a.name for a in node.names]
         elif isinstance(node, ast.ImportFrom):
             mod = ("." * node.level) + (node.module or "")
-            imports.append(mod)
+            if node.module:  # `from . import x` depends on the submodule x, not on the package __init__
+                imports.append(mod)
             imports += [f"{mod}.{a.name}" if not mod.endswith(".") else f"{mod}{a.name}" for a in node.names]
     return syms, funcs, imports
 

@@ -1,0 +1,35 @@
+{
+  "repo": "react-notes",
+  "description": "React + Vite notes app with an intentionally inaccessible, non-responsive UI (vitest unit tests green).",
+  "language_hint": "ui",
+  "tasks": [
+    {
+      "id": "ui-improve",
+      "task_type": "ui",
+      "title": "Improve the UI",
+      "prompt": "Improve the UI: make it accessible and usable on mobile.",
+      "criteria": [
+        {"id": "build", "kind": "build", "hard": true, "description": "npm install + vite build succeed"},
+        {"id": "no_regression", "kind": "no_regression", "hard": true, "description": "every unit test that passed originally still passes"},
+        {"id": "policy", "kind": "policy", "hard": true, "description": "no .github edits, existing tests untouched, bounded change"},
+        {"id": "security", "kind": "security", "hard": true, "description": "no new medium/high findings"},
+        {"id": "secrets", "kind": "secrets", "hard": true, "description": "no secret-looking strings added"},
+        {"id": "ui_console", "kind": "ui_build_console", "hard": true, "description": "built page loads with no new console errors"},
+        {"id": "ui_overflow", "kind": "ui_overflow", "hard": true, "description": "no horizontal overflow at 375, 768 and 1280 px"},
+        {"id": "ui_axe", "kind": "ui_axe", "hard": true, "description": "axe-core violations decrease (never increase)", "params": {"require_decrease": true}},
+        {"id": "ui_smoke", "kind": "ui_smoke", "hard": true, "description": "add-note / search key flow works before and after", "params": {"script_from": "smoke/notes-flow.js"}},
+        {"id": "vision", "kind": "advisory_vision", "hard": false, "description": "before/after screenshots look clearly better (advisory)"}
+      ],
+      "reference": {"dir": "reference/ui-improve", "delete": [],
+                    "units": [
+                      {"id": "u1-semantics", "title": "Landmarks, labels and button names", "files": ["index.html", "src/App.jsx", "src/components/Toolbar.jsx", "src/components/NoteEditor.jsx", "src/components/NoteList.jsx"]},
+                      {"id": "u2-styles", "title": "Responsive layout and contrast", "files": ["src/styles.css"]}
+                    ]},
+      "bad": {
+        "tests-deleted-overflow-remains": {"dir": "bad/ui-tests-deleted",
+                                           "delete": ["src/notes.test.js", "src/components/components.test.jsx"],
+                                           "note": "adds labels but keeps the fixed-width CSS and deletes the tests"}
+      }
+    }
+  ]
+}

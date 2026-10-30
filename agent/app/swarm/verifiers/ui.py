@@ -284,6 +284,8 @@ async def _after(c: Criterion, ctx: Ctx) -> tuple[dict | None, VerifyResult | No
         return None, skip(c, base_ui["reason"]), base_ui
     files = await ctx.files()
     rm = await ctx.repo_map()
+    if not is_web_app(rm, files):
+        return None, skip(c, "not a static web app (no index.html)"), base_ui
     state = await ui_state(ctx.ws, rm, files)
     if state["status"] == "skip":
         return None, skip(c, state["detail"]), base_ui
