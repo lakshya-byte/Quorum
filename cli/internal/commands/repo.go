@@ -211,21 +211,58 @@ func reposCmd() *cobra.Command {
 	return c
 }
 
-// ---- fix on a repo ----------------------------------------------------------
+// ---- running a task on a repo ----------------------------------------------
 
-// repoFix creates a task and streams it. Exit codes: 0 solved, 1 unsolved, 2 error.
-func repoFix(cmd *cobra.Command, cl *api.Client, repo, branch, task string, autoPR, jsonOut bool) error {
+// Exit codes of the task commands (CONTRACT-V3 §5).
+const (
+	exitComplete   = 0
+	exitFailed     = 1
+	exitError      = 2
+	exitPartial    = 3
+	exitNeedsInput = 4
+)
+
+// exitFor maps a run outcome to the process exit code.
+func exitFor(outcome string) int {
+	switch outcome {
+	case "complete":
+		return exitComplete
+	case "partial":
+		return exitPartial
+	case "needs_input":
+		return exitNeedsInput
+	}
+	return exitFailed
+}
+
+// repoFix creates a task and streams it. Exit codes: 0 complete, 3 partial,
+// 1 failed/blocked, 4 needs input, 2 error.
+func repoFix(cmd *cobra.Command, cl *api.Client, repo, task string, o api.TaskOptions, jsonOut bool) error {
 	if !repoPattern.MatchString(repo) {
 		return fail(cmd, errors.New(`--repo must look like owner/name`))
 	}
-	t, err := cl.CreateTask(cmd.Context(), repo, branch, task, autoPR)
+	t, err := cl.CreateTaskWith(cmd.Context(), repo, task, o)
 	if err != nil {
 		return fail(cmd, err)
 	}
 	if !jsonOut {
 		fmt.Fprintf(cmd.ErrOrStderr(), "run %s started on %s@%s (%s)\n", t.RunID, t.Repo, t.Branch, t.Mode)
+		if t.LimitsClamped && t.Limits != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "note: limits were clamped by the server to workers=%d tokens=%d wall=%ds\n", t.Limits.MaxWorkers, t.Limits.MaxTokens, t.Limits.MaxWallS)
+		}
 	}
 	return watchRepoRun(cmd, cl, t.RunID, jsonOut)
+}
+
+// newRenderer builds the run renderer: a live in-place swarm frame on a
+// terminal, plain lines otherwise.
+func newRenderer(out io.Writer, jsonOut bool) (*render.Renderer, bool) {
+	f, isFile := out.(*os.File)
+	if !jsonOut && isFile && useColor(out) {
+		cols, rows := render.TerminalSize(f)
+		return render.NewLive(out, true, cols, rows), true
+	}
+	return render.New(out, !jsonOut && useColor(out)), false
 }
 
 // watchRepoRun streams a repo run, prints the summary and maps the outcome to an exit code.
@@ -239,11 +276,27 @@ func watchRepoRun(cmd *cobra.Command, cl *api.Client, runID string, jsonOut bool
 	}
 	defer body.Close()
 
-	r := render.New(out, useColor(out))
+	r, live := newRenderer(out, jsonOut)
 	track := render.New(io.Discard, false)
 	sp := render.NewSpinner(cmd.ErrOrStderr(), !jsonOut && useColor(cmd.ErrOrStderr()))
 	sp.Start("agents are working")
 	defer sp.Stop()
+	if live {
+		tick := time.NewTicker(100 * time.Millisecond)
+		quit := make(chan struct{})
+		defer func() { close(quit); tick.Stop() }()
+		go func() {
+			for {
+				select {
+				case <-quit:
+					return
+				case <-tick.C:
+					r.Tick()
+				}
+			}
+		}()
+	}
+	swarmSeen := false
 	rd := sse.NewReader(body)
 	for {
 		ev, err := rd.Next()
@@ -258,23 +311,31 @@ func watchRepoRun(cmd *cobra.Command, cl *api.Client, runID string, jsonOut bool
 			}
 			break
 		}
-		sp.Pause()
+		if ev.Type == "plan" && !swarmSeen {
+			swarmSeen = true
+			sp.Stop() // the swarm view has its own per-agent spinners
+		}
+		if !swarmSeen {
+			sp.Pause()
+		}
 		if jsonOut {
 			if ev.Raw != "" {
 				fmt.Fprintln(out, ev.Raw)
 			}
 			track.Event(ev)
-			r.Done, r.Solved, r.PRURL = track.Done, track.Solved, track.PRURL
+			r.Done, r.Solved, r.PRURL, r.Outcome = track.Done, track.Solved, track.PRURL, track.Outcome
 			r.Errors = track.Errors
 		} else {
 			r.Event(ev)
 		}
-		sp.Resume()
-		switch ev.Type {
-		case "round":
-			sp.SetMessage("candidates are being tested")
-		case "done":
-			sp.SetMessage("opening the pull request")
+		if !swarmSeen {
+			sp.Resume()
+			switch ev.Type {
+			case "round":
+				sp.SetMessage("candidates are being tested")
+			case "done":
+				sp.SetMessage("opening the pull request")
+			}
 		}
 		if ev.Type == "end" {
 			break
@@ -285,17 +346,16 @@ func watchRepoRun(cmd *cobra.Command, cl *api.Client, runID string, jsonOut bool
 	if !jsonOut {
 		summarize(cmd, cl, runID, r)
 	}
-	switch {
-	case r.Solved:
-		return nil
-	case r.Done:
-		return &ExitError{Code: 1}
-	default:
-		if !jsonOut && len(r.Errors) == 0 {
-			fmt.Fprintln(cmd.ErrOrStderr(), "error: the stream ended before the run finished")
+	if r.Done {
+		if code := exitFor(r.Outcome); code != exitComplete {
+			return &ExitError{Code: code}
 		}
-		return &ExitError{Code: 2}
+		return nil
 	}
+	if !jsonOut && len(r.Errors) == 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "error: the stream ended before the run finished")
+	}
+	return &ExitError{Code: exitError}
 }
 
 func summarize(cmd *cobra.Command, cl *api.Client, runID string, r *render.Renderer) {
@@ -312,12 +372,29 @@ func summarize(cmd *cobra.Command, cl *api.Client, runID string, r *render.Rende
 		if run.Cost != nil && run.Cost.Tokens > 0 {
 			fmt.Fprintf(errw, "cost: %d tokens, latency %.1fs\n", run.Cost.Tokens, float64(run.LatencyMs)/1000)
 		}
+		if n := len(run.Artifacts); n > 0 {
+			fmt.Fprintf(errw, "%d artifacts (screenshots, logs): patchloop artifacts %s --save ./artifacts\n", n, runID)
+		}
+	}
+	patch := r.Outcome == "complete" || r.Outcome == "partial"
+	if r.Outcome == "partial" {
+		fmt.Fprintln(errw, "partial result: hard gates pass, but not everything could be verified or only some units landed. Review the pull request carefully.")
 	}
 	if prURL != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "PR: %s\n", prURL)
 		fmt.Fprintf(errw, "Review it, then merge on GitHub or run: patchloop merge %s\n", runID)
-	} else if r.Solved {
+	} else if patch {
 		fmt.Fprintf(errw, "No PR yet. Open one with: patchloop pr %s\n", runID)
+	}
+	if r.Outcome == "needs_input" {
+		out := cmd.OutOrStdout()
+		fmt.Fprintln(out, "PatchLoop needs more information:")
+		if err == nil {
+			for i, q := range run.Questions {
+				fmt.Fprintf(out, "  %d. [%s] %s\n", i+1, q.ID, q.Text)
+			}
+		}
+		fmt.Fprintf(out, "Answer with: patchloop answer %s \"1: ...\"   (one line per question; plain text answers the first)\n", runID)
 	}
 }
 

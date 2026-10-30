@@ -26,16 +26,52 @@ const (
 type Renderer struct {
 	w      io.Writer
 	color  bool
-	Solved bool
+	Solved bool // outcome complete (legacy: the run solved the bug)
 	Done   bool
 	Ended  bool
 	Errors []string
 	PRURL  string
+
+	// Swarm runs (CONTRACT-V3): outcome is complete|partial|failed|needs_input|blocked
+	// ("" until the done event; derived from solved for legacy streams).
+	Outcome   string
+	TaskType  string
+	HardPass  int
+	HardTotal int
+
+	live        bool
+	width, rows int
+	sw          *Swarm
 }
 
 func New(w io.Writer, color bool) *Renderer {
 	return &Renderer{w: w, color: color}
 }
+
+// NewLive is New for a terminal: swarm runs are drawn as one frame that is
+// redrawn in place (call Tick every ~100 ms to animate the spinners).
+func NewLive(w io.Writer, color bool, width, rows int) *Renderer {
+	r := &Renderer{w: w, color: color, live: true, width: width, rows: rows}
+	r.sw = NewSwarm(w, color, true, width, rows) // eager: the ticker goroutine reads it
+	return r
+}
+
+func (r *Renderer) swarm() *Swarm {
+	if r.sw == nil {
+		r.sw = NewSwarm(r.w, r.color, r.live, r.width, r.rows)
+	}
+	return r.sw
+}
+
+// Tick animates the live swarm frame (no-op otherwise).
+func (r *Renderer) Tick() {
+	if r.sw != nil {
+		r.sw.Tick()
+	}
+}
+
+// SwarmActive reports whether a swarm plan was rendered.
+func (r *Renderer) SwarmActive() bool { return r.sw != nil && r.sw.Active() }
 
 func (r *Renderer) c(code, s string) string {
 	if !r.color {
@@ -45,6 +81,10 @@ func (r *Renderer) c(code, s string) string {
 }
 
 func (r *Renderer) line(depth int, s string) {
+	if r.sw != nil && r.live {
+		r.sw.Print(strings.Repeat("  ", depth) + s) // above the live frame
+		return
+	}
 	fmt.Fprintf(r.w, "%s%s\n", strings.Repeat("  ", depth), s)
 }
 
@@ -185,29 +225,86 @@ func (r *Renderer) Event(ev sse.Event) {
 		}
 		_ = json.Unmarshal(ev.Data, &d)
 		r.line(1, r.c(amber, "✎ critic")+fmt.Sprintf(" on #%s: %s", idStr(d.NodeID), d.Lesson))
+	case "plan", "agent", "tool", "unit", "merge", "verify", "artifact", "budget", "clarify":
+		r.swarm().Handle(ev.Type, ev.Data)
+		if ev.Type == "plan" {
+			var p struct {
+				TaskType string `json:"task_type"`
+			}
+			_ = json.Unmarshal(ev.Data, &p)
+			r.TaskType = p.TaskType
+		}
 	case "done":
 		var d struct {
-			Solved bool  `json:"solved"`
-			Best   *node `json:"best"`
-			Usage  struct {
+			Solved   bool   `json:"solved"`
+			Outcome  string `json:"outcome"`
+			TaskType string `json:"task_type"`
+			Best     *node  `json:"best"`
+			Criteria *struct {
+				HardPass  int              `json:"hard_pass"`
+				HardTotal int              `json:"hard_total"`
+				Advisory  []map[string]any `json:"advisory"`
+			} `json:"criteria"`
+			Agents *struct {
+				Spawned      int `json:"spawned"`
+				PeakParallel int `json:"peak_parallel"`
+			} `json:"agents"`
+			Usage struct {
 				Prompt     float64 `json:"prompt_tokens"`
 				Completion float64 `json:"completion_tokens"`
 			} `json:"usage"`
 			LatencyMs float64 `json:"latency_ms"`
 			TTFN      float64 `json:"time_to_first_node_ms"`
+			TTFE      float64 `json:"time_to_first_event_ms"`
 		}
 		_ = json.Unmarshal(ev.Data, &d)
-		r.Done, r.Solved = true, d.Solved
-		head := r.c(bold+red, "✗ NOT SOLVED")
-		if d.Solved {
-			head = r.c(bold+green, "✓ SOLVED")
+		outcome := d.Outcome
+		switch outcome {
+		case "complete", "partial", "failed", "needs_input", "blocked":
+		default:
+			outcome = "failed"
+			if d.Solved {
+				outcome = "complete"
+			}
 		}
+		r.Done, r.Outcome, r.Solved = true, outcome, outcome == "complete"
+		if d.TaskType != "" {
+			r.TaskType = d.TaskType
+		}
+		if d.Criteria != nil {
+			r.HardPass, r.HardTotal = d.Criteria.HardPass, d.Criteria.HardTotal
+		}
+		swarm := r.SwarmActive()
+		if r.sw != nil {
+			r.sw.Finish()
+		}
+		tokens := d.Usage.Prompt + d.Usage.Completion
+		if swarm {
+			r.line(0, r.outcomeHead(outcome, true)+r.gatesText(d.Criteria != nil))
+			if d.Criteria != nil {
+				for i, a := range d.Criteria.Advisory {
+					if i >= 5 {
+						r.line(1, r.c(dim, fmt.Sprintf("… %d more advisory notes", len(d.Criteria.Advisory)-5)))
+						break
+					}
+					r.line(1, r.c(purple, "◇ advisory ")+advisoryText(a))
+				}
+			}
+			meta := []string{}
+			if d.Agents != nil {
+				meta = append(meta, fmt.Sprintf("%d agents (peak %d in parallel)", d.Agents.Spawned, d.Agents.PeakParallel))
+			}
+			meta = append(meta, fmt.Sprintf("tokens %.0f", tokens), "latency "+fmtMs(d.LatencyMs))
+			r.line(1, strings.Join(meta, " · "))
+			break
+		}
+		head := r.outcomeHead(outcome, false)
 		if d.Best != nil {
 			head += fmt.Sprintf("  best #%s %d/%d tests", idStr(d.Best.ID), d.Best.Passed, d.Best.Total)
 		}
 		r.line(0, head)
 		r.line(1, fmt.Sprintf("tokens %.0f (prompt %.0f + completion %.0f) · latency %s · first node %s",
-			d.Usage.Prompt+d.Usage.Completion, d.Usage.Prompt, d.Usage.Completion, fmtMs(d.LatencyMs), fmtMs(d.TTFN)))
+			tokens, d.Usage.Prompt, d.Usage.Completion, fmtMs(d.LatencyMs), fmtMs(d.TTFN)))
 	case "repo":
 		var d struct {
 			FullName    string `json:"full_name"`
@@ -256,12 +353,15 @@ func (r *Renderer) Event(ev sse.Event) {
 			Branch  string `json:"branch"`
 			Fake    bool   `json:"fake"`
 			Updated bool   `json:"updated"`
+			Commits int    `json:"commits"`
 		}
 		_ = json.Unmarshal(ev.Data, &d)
 		r.PRURL = d.URL
 		verb := "opened"
 		if d.Updated {
 			verb = "updated (new commit)"
+		} else if d.Commits > 1 {
+			verb = fmt.Sprintf("opened (%d commits, one per unit)", d.Commits)
 		}
 		label := "PR"
 		if d.Number > 0 {

@@ -183,7 +183,19 @@ type Run struct {
 	PRNumber int    `json:"prNumber"`
 	PRBranch string `json:"prBranch"`
 	TraceID  string `json:"traceId"`
-	Merged   *struct {
+
+	// Swarm fields (CONTRACT-V3).
+	TaskType        string           `json:"taskType"`
+	TaskTypeSource  string           `json:"taskTypeSource"`
+	Outcome         string           `json:"outcome"`
+	CriteriaSummary *CriteriaSummary `json:"criteriaSummary"`
+	AgentsSpawned   int              `json:"agentsSpawned"`
+	PeakParallel    int              `json:"peakParallel"`
+	Artifacts       []Artifact       `json:"artifacts"`
+	Questions       []Question       `json:"questions"`
+	ParentRunID     string           `json:"parentRunId"`
+
+	Merged *struct {
 		By string    `json:"by"`
 		At time.Time `json:"at"`
 	} `json:"merged"`
